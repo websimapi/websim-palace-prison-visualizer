@@ -3,16 +3,48 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 class AudioVisualizer {
   constructor() {
+    this.setupLoadingScreen();
+  }
+
+  setupLoadingScreen() {
+    this.startButton = document.getElementById('startButton');
+    this.loadingScreen = document.getElementById('loading-screen');
+    this.progressBar = document.querySelector('.progress-bar');
+    this.container = document.getElementById('container');
+    this.audioControls = document.getElementById('audio-controls');
+
+    this.startButton.addEventListener('click', () => this.initializeExperience());
+  }
+
+  async initializeExperience() {
+    this.startButton.style.display = 'none';
+    await this.loadResources();
     this.setup();
     this.createScene();
     this.setupAudio();
-    this.pathProgress = 0;
+    this.setupCameraPath();
     this.animate();
+    
+    // Fade out loading screen and fade in experience
+    this.loadingScreen.style.opacity = 0;
+    this.container.style.opacity = 1;
+    this.audioControls.style.opacity = 1;
+    
+    setTimeout(() => {
+      this.loadingScreen.style.display = 'none';
+    }, 1000);
+  }
+
+  async loadResources() {
+    // Simulate loading resources
+    const totalSteps = 100;
+    for (let i = 0; i < totalSteps; i++) {
+      await new Promise(resolve => setTimeout(resolve, 20));
+      this.progressBar.style.width = `${(i + 1) / totalSteps * 100}%`;
+    }
   }
 
   setup() {
-    this.container = document.getElementById('container');
-    
     // Scene setup
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
@@ -24,10 +56,8 @@ class AudioVisualizer {
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
     
-    // Camera position
-    this.camera.position.set(0, 3, 10);
-    this.camera.fov = 85;
-    this.camera.updateProjectionMatrix();
+    // Initial camera position (center room)
+    this.camera.position.set(0, 2, 0);
     
     // Lighting
     const ambientLight = new THREE.AmbientLight(0x404040);
@@ -37,183 +67,148 @@ class AudioVisualizer {
     directionalLight.position.set(1, 1, 1);
     this.scene.add(directionalLight);
 
-    // Make controls more restricted
-    this.controls.enabled = false; // Disable controls for guided experience
-
-    // Handle window resize
     window.addEventListener('resize', () => this.onWindowResize(), false);
   }
 
   createScene() {
-    // Create expanded palace with maze chambers
-    this.createMazePalace();
-    
-    // Create audio-reactive path
+    this.createMaze();
     this.createAudioPath();
   }
 
-  createMazePalace() {
-    // Create an expanded floor for the maze palace
-    const floorSize = 100;
-    const floorSegments = 20;
-    const segmentSize = floorSize / floorSegments;
-    
-    for (let x = 0; x < floorSegments; x++) {
-      for (let z = 0; z < floorSegments; z++) {
-        const segment = new THREE.Mesh(
-          new THREE.PlaneGeometry(segmentSize * 0.98, segmentSize * 0.98),
-          new THREE.MeshStandardMaterial({
-            color: (x + z) % 2 === 0 ? 0x8B4513 : 0x654321,
-            metalness: 0.3,
-            roughness: 0.7,
-          })
-        );
-        
-        segment.position.set(
-          (x - floorSegments/2 + 0.5) * segmentSize,
-          0.01,
-          (z - floorSegments/2 + 0.5) * segmentSize
-        );
-        segment.rotation.x = -Math.PI / 2;
-        this.scene.add(segment);
-      }
-    }
-
-    // Create maze chambers
-    this.createMazeChambers();
-  }
-
-  createMazeChambers() {
-    // Define maze layout (1 = wall, 0 = path)
-    const mazeSize = 7;
-    const maze = [
-      [1, 1, 1, 1, 1, 1, 1],
-      [1, 0, 0, 0, 0, 0, 1],
-      [1, 1, 1, 0, 1, 0, 1],
-      [1, 0, 0, 0, 1, 0, 1],
-      [1, 0, 1, 1, 1, 0, 1],
-      [1, 0, 0, 0, 0, 0, 1],
-      [1, 1, 1, 1, 1, 1, 1]
-    ];
-
-    const wallHeight = 8;
-    const chamberSize = 12;
-    const wallThickness = 1;
+  createMaze() {
+    // Create maze layout
+    this.rooms = [];
+    const mazeSize = 5; // 5x5 grid of rooms
+    const roomSize = 10;
+    const wallThickness = 0.5;
 
     for (let x = 0; x < mazeSize; x++) {
       for (let z = 0; z < mazeSize; z++) {
-        if (maze[z][x] === 1) {
-          // Create chamber walls
-          const wallGeometry = new THREE.BoxGeometry(chamberSize, wallHeight, chamberSize);
-          const wallMaterial = new THREE.MeshStandardMaterial({
-            color: 0xD2B48C,
-            metalness: 0.2,
-            roughness: 0.8,
-          });
-          
-          const wall = new THREE.Mesh(wallGeometry, wallMaterial);
-          wall.position.set(
-            (x - mazeSize/2) * chamberSize,
-            wallHeight/2,
-            (z - mazeSize/2) * chamberSize
-          );
-          
-          // Add architectural details to walls
-          this.addWallDetails(wall, chamberSize);
-          this.scene.add(wall);
-        }
+        const posX = (x - Math.floor(mazeSize/2)) * roomSize;
+        const posZ = (z - Math.floor(mazeSize/2)) * roomSize;
+        
+        const room = this.createRoom(roomSize, wallThickness, posX, posZ);
+        this.rooms.push(room);
+        this.scene.add(room);
       }
     }
 
-    // Add ceiling to all chambers
-    const ceilingGeometry = new THREE.PlaneGeometry(mazeSize * chamberSize, mazeSize * chamberSize);
-    const ceilingMaterial = new THREE.MeshStandardMaterial({
-      color: 0xD2B48C,
+    // Add connecting corridors
+    this.createCorridors(mazeSize, roomSize);
+  }
+
+  createRoom(size, wallThickness, x, z) {
+    const room = new THREE.Group();
+    
+    // Floor
+    const floorGeometry = new THREE.PlaneGeometry(size, size);
+    const floorMaterial = new THREE.MeshStandardMaterial({
+      color: 0x8B4513,
       metalness: 0.3,
       roughness: 0.7,
+    });
+    const floor = new THREE.Mesh(floorGeometry, floorMaterial);
+    floor.rotation.x = -Math.PI / 2;
+    room.add(floor);
+
+    // Ceiling
+    const ceiling = floor.clone();
+    ceiling.position.y = size;
+    room.add(ceiling);
+
+    // Walls
+    const wallGeometry = new THREE.BoxGeometry(size, size, wallThickness);
+    const wallMaterial = new THREE.MeshStandardMaterial({
+      color: 0xD2B48C,
+      metalness: 0.2,
+      roughness: 0.8,
+    });
+
+    // North wall
+    const northWall = new THREE.Mesh(wallGeometry, wallMaterial);
+    northWall.position.z = -size/2;
+    northWall.position.y = size/2;
+    room.add(northWall);
+
+    // South wall
+    const southWall = northWall.clone();
+    southWall.position.z = size/2;
+    room.add(southWall);
+
+    // East wall
+    const eastWall = new THREE.Mesh(wallGeometry, wallMaterial);
+    eastWall.rotation.y = Math.PI/2;
+    eastWall.position.x = size/2;
+    eastWall.position.y = size/2;
+    room.add(eastWall);
+
+    // West wall
+    const westWall = eastWall.clone();
+    westWall.position.x = -size/2;
+    room.add(westWall);
+
+    room.position.set(x, 0, z);
+    return room;
+  }
+
+  createCorridors(mazeSize, roomSize) {
+    // Create a simple maze pattern connecting rooms
+    for (let x = 0; x < mazeSize; x++) {
+      for (let z = 0; z < mazeSize; z++) {
+        if (Math.random() > 0.3) {
+          if (x < mazeSize - 1) this.connectRooms(x, z, x + 1, z, mazeSize, roomSize);
+        }
+        if (Math.random() > 0.3) {
+          if (z < mazeSize - 1) this.connectRooms(x, z, x, z + 1, mazeSize, roomSize);
+        }
+      }
+    }
+  }
+
+  connectRooms(x1, z1, x2, z2, mazeSize, roomSize) {
+    const corridor = new THREE.Group();
+    const corridorWidth = 3;
+    const corridorHeight = 4;
+    
+    const geometry = new THREE.BoxGeometry(
+      x1 === x2 ? corridorWidth : roomSize,
+      corridorHeight,
+      z1 === z2 ? corridorWidth : roomSize
+    );
+    
+    const material = new THREE.MeshStandardMaterial({
+      color: 0xD2B48C,
+      metalness: 0.2,
+      roughness: 0.8,
       side: THREE.DoubleSide
     });
+
+    const corridor_mesh = new THREE.Mesh(geometry, material);
+    corridor.add(corridor_mesh);
+
+    const posX = (x1 - Math.floor(mazeSize/2)) * roomSize;
+    const posZ = (z1 - Math.floor(mazeSize/2)) * roomSize;
     
-    const ceiling = new THREE.Mesh(ceilingGeometry, ceilingMaterial);
-    ceiling.rotation.x = Math.PI / 2;
-    ceiling.position.y = wallHeight;
-    this.scene.add(ceiling);
+    corridor.position.set(posX, corridorHeight/2, posZ);
+    this.scene.add(corridor);
   }
 
-  addWallDetails(wall, size) {
-    // Add decorative pillars at corners
-    const cornerPositions = [
-      [-size/2, -size/2],
-      [-size/2, size/2],
-      [size/2, -size/2],
-      [size/2, size/2]
+  setupCameraPath() {
+    // Create camera waypoints through the maze
+    this.cameraWaypoints = [
+      new THREE.Vector3(0, 2, 0), // Start in center
+      new THREE.Vector3(10, 2, 0),
+      new THREE.Vector3(10, 2, 10),
+      new THREE.Vector3(0, 2, 10),
+      new THREE.Vector3(-10, 2, 10),
+      new THREE.Vector3(-10, 2, 0),
+      new THREE.Vector3(-10, 2, -10),
+      new THREE.Vector3(0, 2, -10),
+      new THREE.Vector3(10, 2, -10)
     ];
 
-    cornerPositions.forEach(pos => {
-      const pillar = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.4, 0.5, wall.scale.y * 8, 8),
-        new THREE.MeshStandardMaterial({
-          color: 0x8B4513,
-          metalness: 0.4,
-          roughness: 0.6
-        })
-      );
-      
-      pillar.position.set(pos[0], 0, pos[1]);
-      wall.add(pillar);
-    });
-
-    // Add wall trim
-    const trimGeometry = new THREE.BoxGeometry(size, 0.5, size + 0.2);
-    const trimMaterial = new THREE.MeshStandardMaterial({
-      color: 0x8B4513,
-      metalness: 0.5,
-      roughness: 0.5
-    });
-    
-    const topTrim = new THREE.Mesh(trimGeometry, trimMaterial);
-    topTrim.position.y = wall.scale.y/2;
-    wall.add(topTrim);
-    
-    const bottomTrim = new THREE.Mesh(trimGeometry, trimMaterial);
-    bottomTrim.position.y = -wall.scale.y/2;
-    wall.add(bottomTrim);
-  }
-
-  createAudioPath() {
-    this.pathPoints = [];
-    const pathLength = 200; // Increased path length
-    
-    // Create a more complex path through the maze
-    for (let i = 0; i < pathLength; i++) {
-      const t = i / pathLength;
-      const angle = t * Math.PI * 8; // More rotations
-      const radius = 40 - (t * 35); // Larger spiral
-      
-      const x = Math.cos(angle) * radius;
-      const z = Math.sin(angle) * radius;
-      const y = 3 + Math.sin(t * Math.PI * 8) * 2; // Vertical movement
-      
-      this.pathPoints.push(new THREE.Vector3(x, y, z));
-    }
-
-    // Create visual path segments
-    this.pathSegments = [];
-    for (let i = 0; i < pathLength - 1; i++) {
-      const geometry = new THREE.BoxGeometry(0.3, 0.1, 0.3);
-      const material = new THREE.MeshStandardMaterial({
-        color: 0xFFFFFF,
-        emissive: 0xFFFFFF,
-        emissiveIntensity: 0,
-        transparent: true,
-        opacity: 0.6
-      });
-      
-      const segment = new THREE.Mesh(geometry, material);
-      segment.position.copy(this.pathPoints[i]);
-      this.scene.add(segment);
-      this.pathSegments.push(segment);
-    }
+    this.currentWaypoint = 0;
+    this.waypointTransition = 0;
   }
 
   setupAudio() {
@@ -241,41 +236,57 @@ class AudioVisualizer {
     });
   }
 
+  createAudioPath() {
+    this.pathPoints = [];
+    const pathLength = 64;
+    
+    // Create a spiral path
+    for (let i = 0; i < pathLength; i++) {
+      const t = i / pathLength;
+      const angle = t * Math.PI * 4; // 2 complete spirals
+      const radius = 8 - (t * 6); // Spiral inwards
+      
+      const x = Math.cos(angle) * radius;
+      const z = Math.sin(angle) * radius;
+      this.pathPoints.push(new THREE.Vector3(x, 0.5, z));
+    }
+
+    // Create path segments
+    this.pathSegments = [];
+    for (let i = 0; i < pathLength - 1; i++) {
+      const geometry = new THREE.BoxGeometry(0.3, 0.1, 0.3);
+      const material = new THREE.MeshStandardMaterial({
+        color: 0xFFFFFF,
+        emissive: 0xFFFFFF,
+        emissiveIntensity: 0,
+        transparent: true,
+        opacity: 0.8
+      });
+      
+      const segment = new THREE.Mesh(geometry, material);
+      segment.position.copy(this.pathPoints[i]);
+      this.scene.add(segment);
+      this.pathSegments.push(segment);
+    }
+  }
+
   updateAudioData() {
     this.analyser.getByteFrequencyData(this.dataArray);
     
-    // Update path segments with more dramatic effects
-    const segments = Math.min(this.pathSegments.length, this.dataArray.length);
-    for (let i = 0; i < segments; i++) {
+    // Update path segments based on audio data
+    for (let i = 0; i < this.pathSegments.length; i++) {
       const value = this.dataArray[i] || 0;
       const intensity = value / 255;
       
       const segment = this.pathSegments[i];
-      segment.position.y = this.pathPoints[i].y + intensity * 2;
+      segment.position.y = 0.5 + intensity * 1.5;
       segment.material.emissiveIntensity = intensity;
-      segment.scale.set(
-        1 + intensity * 1.5,
-        1 + intensity * 3,
-        1 + intensity * 1.5
-      );
+      segment.scale.y = 1 + intensity * 2;
       
-      // Enhanced color effects
-      const hue = (0.6 - intensity * 0.6 + i * 0.002) % 1;
+      // Color gradient based on intensity
+      const hue = 0.6 - intensity * 0.6; // Blue to red
       segment.material.color.setHSL(hue, 1, 0.5);
       segment.material.emissive.setHSL(hue, 1, 0.5);
-    }
-
-    // Update camera position based on audio intensity
-    const avgIntensity = this.dataArray.reduce((a, b) => a + b, 0) / this.dataArray.length;
-    this.pathProgress += (0.0001 + (avgIntensity / 25000));
-    if (this.pathProgress >= 1) this.pathProgress = 0;
-
-    const currentIndex = Math.floor(this.pathProgress * this.pathPoints.length);
-    const lookAheadIndex = (currentIndex + 1) % this.pathPoints.length;
-    
-    if (this.pathPoints[currentIndex]) {
-      this.camera.position.copy(this.pathPoints[currentIndex]);
-      this.camera.lookAt(this.pathPoints[lookAheadIndex]);
     }
   }
 
@@ -288,9 +299,23 @@ class AudioVisualizer {
   animate() {
     requestAnimationFrame(() => this.animate());
     
-    // Update audio visualizer
     if (this.analyser) {
       this.updateAudioData();
+    }
+    
+    // Update camera position along path
+    if (this.audio && !this.audio.paused) {
+      this.waypointTransition += 0.001;
+      if (this.waypointTransition >= 1) {
+        this.waypointTransition = 0;
+        this.currentWaypoint = (this.currentWaypoint + 1) % this.cameraWaypoints.length;
+      }
+
+      const current = this.cameraWaypoints[this.currentWaypoint];
+      const next = this.cameraWaypoints[(this.currentWaypoint + 1) % this.cameraWaypoints.length];
+      
+      this.camera.position.lerpVectors(current, next, this.waypointTransition);
+      this.camera.lookAt(0, 2, 0);
     }
     
     this.controls.update();
