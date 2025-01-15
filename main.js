@@ -74,6 +74,7 @@ class AudioVisualizer {
   createScene() {
     this.generateMazeData();
     this.createMaze();
+    this.findValidPaths();
     this.createAudioPath();
     this.generateValidCameraPath();
   }
@@ -263,64 +264,159 @@ class AudioVisualizer {
     }
   }
 
-  generateValidCameraPath() {
-    // Find path from center to edge using breadth-first search
+  findValidPaths() {
     const mazeSize = this.mazeData.length;
     const startX = Math.floor(mazeSize/2);
     const startZ = Math.floor(mazeSize/2);
     
-    const queue = [[startX, startZ]];
-    const visited = new Set();
-    const parent = new Map();
+    // Find path using A* pathfinding
+    this.validPath = this.findPathToExit(startX, startZ);
     
-    visited.add(`${startX},${startZ}`);
+    // Convert maze coordinates to world coordinates
+    this.worldPath = this.validPath.map(([x, z]) => {
+      return new THREE.Vector3(
+        (x - Math.floor(mazeSize/2)) * 10,
+        2,
+        (z - Math.floor(mazeSize/2)) * 10
+      );
+    });
+  }
 
-    while (queue.length > 0) {
-      const [currentX, currentZ] = queue.shift();
+  findPathToExit(startX, startZ) {
+    const mazeSize = this.mazeData.length;
+    const goal = this.findExitPoint(startX, startZ);
+    const openSet = [[startX, startZ]];
+    const closedSet = new Set();
+    const cameFrom = new Map();
+    const gScore = new Map();
+    const fScore = new Map();
+    
+    gScore.set(`${startX},${startZ}`, 0);
+    fScore.set(`${startX},${startZ}`, this.heuristic([startX, startZ], goal));
+    
+    while (openSet.length > 0) {
+      const current = this.getLowestFScore(openSet, fScore);
+      if (current[0] === goal[0] && current[1] === goal[1]) {
+        return this.reconstructPath(cameFrom, current);
+      }
       
-      // Check if we've reached the edge of the maze
-      if (currentX === 0 || currentX === mazeSize-1 || currentZ === 0 || currentZ === mazeSize-1) {
-        // Build path by backtracking through parents
-        this.cameraWaypoints = [];
-        let current = [currentX, currentZ];
+      openSet.splice(openSet.indexOf(current), 1);
+      closedSet.add(`${current[0]},${current[1]}`);
+      
+      const neighbors = this.getValidNeighbors(current[0], current[1]);
+      for (const neighbor of neighbors) {
+        if (closedSet.has(`${neighbor[0]},${neighbor[1]}`)) continue;
         
-        while (current) {
-          const [x, z] = current;
-          const worldX = (x - Math.floor(mazeSize/2)) * 10;
-          const worldZ = (z - Math.floor(mazeSize/2)) * 10;
-          this.cameraWaypoints.unshift(new THREE.Vector3(worldX, 2, worldZ));
-          current = parent.get(`${x},${z}`);
+        const tentativeGScore = gScore.get(`${current[0]},${current[1]}`) + 1;
+        
+        if (!openSet.find(([x, z]) => x === neighbor[0] && z === neighbor[1])) {
+          openSet.push(neighbor);
+        } else if (tentativeGScore >= (gScore.get(`${neighbor[0]},${neighbor[1]}`) || Infinity)) {
+          continue;
         }
         
-        break;
+        cameFrom.set(`${neighbor[0]},${neighbor[1]}`, current);
+        gScore.set(`${neighbor[0]},${neighbor[1]}`, tentativeGScore);
+        fScore.set(`${neighbor[0]},${neighbor[1]}`, 
+          tentativeGScore + this.heuristic(neighbor, goal));
       }
+    }
+    
+    return null;
+  }
 
-      // Check all valid neighbors
-      const directions = [
-        [currentX, currentZ-1, 'north'],
-        [currentX, currentZ+1, 'south'],
-        [currentX+1, currentZ, 'east'],
-        [currentX-1, currentZ, 'west']
-      ];
+  findExitPoint(startX, startZ) {
+    const mazeSize = this.mazeData.length;
+    const exits = [];
+    
+    // Check all edge cells for valid exits
+    for (let i = 0; i < mazeSize; i++) {
+      if (this.mazeData[i][0].north) exits.push([i, 0]);
+      if (this.mazeData[i][mazeSize-1].south) exits.push([i, mazeSize-1]);
+      if (this.mazeData[0][i].west) exits.push([0, i]);
+      if (this.mazeData[mazeSize-1][i].east) exits.push([mazeSize-1, i]);
+    }
+    
+    // Find closest exit
+    return exits.reduce((closest, exit) => {
+      const currentDist = Math.abs(exit[0] - startX) + Math.abs(exit[1] - startZ);
+      const closestDist = Math.abs(closest[0] - startX) + Math.abs(closest[1] - startZ);
+      return currentDist < closestDist ? exit : closest;
+    });
+  }
 
-      for (const [nextX, nextZ, direction] of directions) {
-        const key = `${nextX},${nextZ}`;
-        if (!visited.has(key) && 
-            this.isValidCell(nextX, nextZ) && 
-            this.mazeData[currentX][currentZ][direction]) {
-          queue.push([nextX, nextZ]);
-          visited.add(key);
-          parent.set(key, [currentX, currentZ]);
+  heuristic(pos, goal) {
+    return Math.abs(pos[0] - goal[0]) + Math.abs(pos[1] - goal[1]);
+  }
+
+  getLowestFScore(openSet, fScore) {
+    return openSet.reduce((lowest, current) => {
+      const currentScore = fScore.get(`${current[0]},${current[1]}`) || Infinity;
+      const lowestScore = fScore.get(`${lowest[0]},${lowest[1]}`) || Infinity;
+      return currentScore < lowestScore ? current : lowest;
+    });
+  }
+
+  reconstructPath(cameFrom, current) {
+    const path = [current];
+    while (cameFrom.has(`${current[0]},${current[1]}`)) {
+      current = cameFrom.get(`${current[0]},${current[1]}`);
+      path.unshift(current);
+    }
+    return path;
+  }
+
+  getValidNeighbors(x, z) {
+    const neighbors = [];
+    if (this.mazeData[x][z].north && z > 0) neighbors.push([x, z-1]);
+    if (this.mazeData[x][z].south && z < this.mazeData.length-1) neighbors.push([x, z+1]);
+    if (this.mazeData[x][z].east && x < this.mazeData.length-1) neighbors.push([x+1, z]);
+    if (this.mazeData[x][z].west && x > 0) neighbors.push([x-1, z]);
+    return neighbors;
+  }
+
+  createAudioPath() {
+    // Create audio path following the valid maze path
+    this.pathPoints = [];
+    this.pathSegments = [];
+    
+    // Create path points along the valid path
+    for (let i = 0; i < this.worldPath.length; i++) {
+      const point = this.worldPath[i];
+      const numSubPoints = 8; // Add intermediate points between maze cells
+      
+      if (i < this.worldPath.length - 1) {
+        const nextPoint = this.worldPath[i + 1];
+        for (let j = 0; j < numSubPoints; j++) {
+          const t = j / numSubPoints;
+          const subPoint = new THREE.Vector3().lerpVectors(point, nextPoint, t);
+          this.pathPoints.push(subPoint);
         }
       }
     }
 
-    this.currentWaypoint = 0;
-    this.waypointTransition = 0;
+    // Create visual segments for the audio path
+    this.pathPoints.forEach((point, i) => {
+      const geometry = new THREE.BoxGeometry(0.3, 0.1, 0.3);
+      const material = new THREE.MeshStandardMaterial({
+        color: 0xFFFFFF,
+        emissive: 0xFFFFFF,
+        emissiveIntensity: 0,
+        transparent: true,
+        opacity: 0.8
+      });
+      
+      const segment = new THREE.Mesh(geometry, material);
+      segment.position.copy(point);
+      this.scene.add(segment);
+      this.pathSegments.push(segment);
+    });
   }
 
-  setupCameraPath() {
-    // Create camera waypoints through the maze
+  generateValidCameraPath() {
+    this.cameraWaypoints = this.worldPath;
+    this.currentWaypoint = 0;
+    this.waypointTransition = 0;
   }
 
   setupAudio() {
@@ -348,40 +444,6 @@ class AudioVisualizer {
     });
   }
 
-  createAudioPath() {
-    this.pathPoints = [];
-    const pathLength = 64;
-    
-    // Create a spiral path
-    for (let i = 0; i < pathLength; i++) {
-      const t = i / pathLength;
-      const angle = t * Math.PI * 4; // 2 complete spirals
-      const radius = 8 - (t * 6); // Spiral inwards
-      
-      const x = Math.cos(angle) * radius;
-      const z = Math.sin(angle) * radius;
-      this.pathPoints.push(new THREE.Vector3(x, 0.5, z));
-    }
-
-    // Create path segments
-    this.pathSegments = [];
-    for (let i = 0; i < pathLength - 1; i++) {
-      const geometry = new THREE.BoxGeometry(0.3, 0.1, 0.3);
-      const material = new THREE.MeshStandardMaterial({
-        color: 0xFFFFFF,
-        emissive: 0xFFFFFF,
-        emissiveIntensity: 0,
-        transparent: true,
-        opacity: 0.8
-      });
-      
-      const segment = new THREE.Mesh(geometry, material);
-      segment.position.copy(this.pathPoints[i]);
-      this.scene.add(segment);
-      this.pathSegments.push(segment);
-    }
-  }
-
   updateAudioData() {
     this.analyser.getByteFrequencyData(this.dataArray);
     
@@ -402,6 +464,10 @@ class AudioVisualizer {
     }
   }
 
+  setupCameraPath() {
+    // Create camera waypoints through the maze
+  }
+
   onWindowResize() {
     this.camera.aspect = window.innerWidth / window.innerHeight;
     this.camera.updateProjectionMatrix();
@@ -415,8 +481,8 @@ class AudioVisualizer {
       this.updateAudioData();
     }
     
-    // Update camera position along path
-    if (this.audio && !this.audio.paused) {
+    // Smooth camera movement along valid path
+    if (this.audio && !this.audio.paused && this.cameraWaypoints) {
       this.waypointTransition += 0.001;
       if (this.waypointTransition >= 1) {
         this.waypointTransition = 0;
@@ -426,8 +492,17 @@ class AudioVisualizer {
       const current = this.cameraWaypoints[this.currentWaypoint];
       const next = this.cameraWaypoints[(this.currentWaypoint + 1) % this.cameraWaypoints.length];
       
-      this.camera.position.lerpVectors(current, next, this.waypointTransition);
-      this.camera.lookAt(0, 2, 0);
+      if (current && next) {
+        // Smooth camera movement
+        this.camera.position.lerpVectors(current, next, this.waypointTransition);
+        
+        // Look ahead along the path
+        const lookAheadPoint = this.cameraWaypoints[
+          (this.currentWaypoint + 2) % this.cameraWaypoints.length
+        ] || next;
+        
+        this.camera.lookAt(lookAheadPoint);
+      }
     }
     
     this.controls.update();
