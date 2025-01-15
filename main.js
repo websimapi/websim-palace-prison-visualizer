@@ -47,24 +47,49 @@ class AudioVisualizer {
   }
 
   createDetailedPalace() {
-    // Enhanced Floor with texture pattern
-    const floorGeometry = new THREE.PlaneGeometry(20, 20, 20, 20);
+    // Enhanced Floor with improved texture pattern and rendering
+    const floorGeometry = new THREE.PlaneGeometry(20, 20);
     const floorMaterial = new THREE.MeshStandardMaterial({
       color: 0x8B4513,
       metalness: 0.3,
       roughness: 0.7,
+      side: THREE.DoubleSide // Ensures floor is visible from both sides
     });
-    const floor = new THREE.Mesh(floorGeometry, floorMaterial);
-    floor.rotation.x = -Math.PI / 2;
-    this.scene.add(floor);
+    
+    // Create floor segments for better visual detail
+    const floorSegments = 4;
+    const segmentSize = 20 / floorSegments;
+    
+    for (let x = 0; x < floorSegments; x++) {
+      for (let z = 0; z < floorSegments; z++) {
+        const segment = new THREE.Mesh(
+          new THREE.PlaneGeometry(segmentSize * 0.98, segmentSize * 0.98),
+          new THREE.MeshStandardMaterial({
+            color: (x + z) % 2 === 0 ? 0x8B4513 : 0x654321,
+            metalness: 0.3,
+            roughness: 0.7,
+          })
+        );
+        
+        segment.position.set(
+          (x - floorSegments/2 + 0.5) * segmentSize,
+          0.01, // Slight elevation to prevent z-fighting
+          (z - floorSegments/2 + 0.5) * segmentSize
+        );
+        segment.rotation.x = -Math.PI / 2;
+        this.scene.add(segment);
+      }
+    }
 
-    // Detailed Walls with archways
+    // Add base floor for complete coverage
+    const baseFloor = new THREE.Mesh(floorGeometry, floorMaterial);
+    baseFloor.rotation.x = -Math.PI / 2;
+    baseFloor.position.y = 0;
+    this.scene.add(baseFloor);
+
+    // Walls and other elements remain the same
     this.createWalls();
-    
-    // Ornate Ceiling
     this.createCeiling();
-    
-    // Decorative Elements
     this.addDecorativeElements();
   }
 
