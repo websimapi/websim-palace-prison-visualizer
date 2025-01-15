@@ -114,6 +114,13 @@ class AudioVisualizer {
       this.mazeData[nextX][nextZ].visited = true;
       stack.push([nextX, nextZ]);
     }
+
+    // Ensure there's at least one valid path to an exit
+    const exitCreated = this.ensureValidExit(startX, startZ);
+    if (!exitCreated) {
+      // If we couldn't create a path, regenerate the maze
+      this.generateMazeData();
+    }
   }
 
   getUnvisitedNeighbors(x, z) {
@@ -337,12 +344,28 @@ class AudioVisualizer {
       if (this.mazeData[mazeSize-1][i].east) exits.push([mazeSize-1, i]);
     }
     
+    // If no exits found, create one
+    if (exits.length === 0) {
+      // Create an exit on the furthest wall from start
+      const exitX = startX < mazeSize/2 ? mazeSize-1 : 0;
+      const exitZ = Math.floor(mazeSize/2);
+      
+      // Create the exit passage
+      if (exitX === 0) {
+        this.mazeData[exitX][exitZ].west = true;
+      } else {
+        this.mazeData[exitX][exitZ].east = true;
+      }
+      
+      exits.push([exitX, exitZ]);
+    }
+    
     // Find closest exit
     return exits.reduce((closest, exit) => {
       const currentDist = Math.abs(exit[0] - startX) + Math.abs(exit[1] - startZ);
       const closestDist = Math.abs(closest[0] - startX) + Math.abs(closest[1] - startZ);
       return currentDist < closestDist ? exit : closest;
-    });
+    }, exits[0]); // Provide initial value
   }
 
   heuristic(pos, goal) {
@@ -375,22 +398,65 @@ class AudioVisualizer {
     return neighbors;
   }
 
+  ensureValidExit(startX, startZ) {
+    const mazeSize = this.mazeData.length;
+    const visited = new Set();
+    const stack = [[startX, startZ]];
+    
+    while (stack.length > 0) {
+      const [x, z] = stack.pop();
+      const key = `${x},${z}`;
+      
+      if (visited.has(key)) continue;
+      visited.add(key);
+      
+      // Check if we've reached an edge
+      if (x === 0 || x === mazeSize-1 || z === 0 || z === mazeSize-1) {
+        // Create an exit if there isn't one
+        if (x === 0) this.mazeData[x][z].west = true;
+        if (x === mazeSize-1) this.mazeData[x][z].east = true;
+        if (z === 0) this.mazeData[x][z].north = true;
+        if (z === mazeSize-1) this.mazeData[x][z].south = true;
+        return true;
+      }
+      
+      // Add unvisited neighbors to stack
+      const neighbors = this.getValidNeighbors(x, z);
+      for (const neighbor of neighbors) {
+        if (!visited.has(`${neighbor[0]},${neighbor[1]}`)) {
+          stack.push(neighbor);
+        }
+      }
+    }
+    
+    return false;
+  }
+
   createAudioPath() {
     // Create audio path following the valid maze path
     this.pathPoints = [];
     this.pathSegments = [];
     
-    // Create path points along the valid path
+    // Create path points along the valid path with proper room-center alignment
     for (let i = 0; i < this.worldPath.length; i++) {
       const point = this.worldPath[i];
-      const numSubPoints = 8; // Add intermediate points between maze cells
+      const numSubPoints = 8;
       
       if (i < this.worldPath.length - 1) {
         const nextPoint = this.worldPath[i + 1];
-        for (let j = 0; j < numSubPoints; j++) {
-          const t = j / numSubPoints;
-          const subPoint = new THREE.Vector3().lerpVectors(point, nextPoint, t);
-          this.pathPoints.push(subPoint);
+        const direction = new THREE.Vector3().subVectors(nextPoint, point);
+        
+        // Check if path would intersect with walls
+        const isValidPath = this.checkPathValidity(point, nextPoint);
+        
+        if (isValidPath) {
+          for (let j = 0; j < numSubPoints; j++) {
+            const t = j / numSubPoints;
+            const subPoint = new THREE.Vector3().lerpVectors(point, nextPoint, t);
+            // Adjust height to avoid floor clipping
+            subPoint.y = 2;
+            this.pathPoints.push(subPoint);
+          }
         }
       }
     }
@@ -413,8 +479,49 @@ class AudioVisualizer {
     });
   }
 
+  checkPathValidity(start, end) {
+    // Create a raycaster to check for wall intersections
+    const direction = new THREE.Vector3().subVectors(end, start).normalize();
+    const distance = start.distanceTo(end);
+    const raycaster = new THREE.Raycaster(start, direction, 0, distance);
+    
+    // Get all potential wall intersections
+    const intersects = raycaster.intersectObjects(this.scene.children, true);
+    
+    // Filter out non-wall intersections (floor, ceiling, path segments)
+    const wallIntersections = intersects.filter(intersection => {
+      const object = intersection.object;
+      return object.geometry instanceof THREE.BoxGeometry && 
+             object.geometry.parameters.height === 10; // Wall height
+    });
+    
+    return wallIntersections.length === 0;
+  }
+
   generateValidCameraPath() {
-    this.cameraWaypoints = this.worldPath;
+    // Reverse the path to start from the center
+    this.cameraWaypoints = [...this.worldPath].reverse();
+    
+    // Ensure proper forward-facing movement
+    this.cameraPath = [];
+    for (let i = 0; i < this.cameraWaypoints.length - 1; i++) {
+      const current = this.cameraWaypoints[i];
+      const next = this.cameraWaypoints[i + 1];
+      
+      // Calculate direction vector
+      const direction = new THREE.Vector3().subVectors(next, current);
+      
+      // Create camera position slightly behind the current point
+      const cameraOffset = new THREE.Vector3().copy(direction).normalize().multiplyScalar(-2);
+      const cameraPos = new THREE.Vector3().addVectors(current, cameraOffset);
+      cameraPos.y = 2; // Maintain consistent camera height
+      
+      this.cameraPath.push({
+        position: cameraPos,
+        lookAt: next
+      });
+    }
+    
     this.currentWaypoint = 0;
     this.waypointTransition = 0;
   }
@@ -481,27 +588,49 @@ class AudioVisualizer {
       this.updateAudioData();
     }
     
-    // Smooth camera movement along valid path
-    if (this.audio && !this.audio.paused && this.cameraWaypoints) {
+    // Camera movement along valid path
+    if (this.audio && !this.audio.paused && this.cameraPath) {
       this.waypointTransition += 0.001;
       if (this.waypointTransition >= 1) {
         this.waypointTransition = 0;
-        this.currentWaypoint = (this.currentWaypoint + 1) % this.cameraWaypoints.length;
+        this.currentWaypoint = (this.currentWaypoint + 1) % (this.cameraPath.length - 1);
       }
 
-      const current = this.cameraWaypoints[this.currentWaypoint];
-      const next = this.cameraWaypoints[(this.currentWaypoint + 1) % this.cameraWaypoints.length];
-      
-      if (current && next) {
-        // Smooth camera movement
-        this.camera.position.lerpVectors(current, next, this.waypointTransition);
+      if (this.currentWaypoint < this.cameraPath.length - 1) {
+        const current = this.cameraPath[this.currentWaypoint];
+        const next = this.cameraPath[this.currentWaypoint + 1];
         
-        // Look ahead along the path
-        const lookAheadPoint = this.cameraWaypoints[
-          (this.currentWaypoint + 2) % this.cameraWaypoints.length
-        ] || next;
-        
-        this.camera.lookAt(lookAheadPoint);
+        if (current && next) {
+          // Smooth camera position transition
+          const newPos = new THREE.Vector3().lerpVectors(
+            current.position,
+            next.position,
+            this.waypointTransition
+          );
+          
+          // Smooth look-at transition
+          const newLookAt = new THREE.Vector3().lerpVectors(
+            current.lookAt,
+            next.lookAt,
+            this.waypointTransition
+          );
+          
+          // Check for wall collisions before updating camera position
+          const direction = new THREE.Vector3().subVectors(newPos, this.camera.position);
+          const raycaster = new THREE.Raycaster(this.camera.position, direction.normalize());
+          const intersects = raycaster.intersectObjects(this.scene.children, true);
+          
+          const wallCollision = intersects.some(intersection => 
+            intersection.object.geometry instanceof THREE.BoxGeometry && 
+            intersection.object.geometry.parameters.height === 10 &&
+            intersection.distance < direction.length()
+          );
+          
+          if (!wallCollision) {
+            this.camera.position.copy(newPos);
+            this.camera.lookAt(newLookAt);
+          }
+        }
       }
     }
     
