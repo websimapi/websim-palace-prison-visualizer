@@ -38,3 +38,16 @@ button:hover {
   background: rgba(255, 255, 255, 0.2);
   transform: scale(1.05);
 }
+
+/* Add vignette effect */
+#container::after {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: radial-gradient(circle, transparent 60%, rgba(0,0,0,0.8) 100%);
+  pointer-events: none;
+  z-index: 1;
+}
