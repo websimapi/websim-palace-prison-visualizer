@@ -49,7 +49,12 @@ class AudioVisualizer {
   setup() {
     // Scene setup
     this.scene = new THREE.Scene();
-    this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    this.camera = new THREE.PerspectiveCamera(
+      75,
+      window.innerWidth / window.innerHeight,
+      0.1,
+      1000
+    );
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.container.appendChild(this.renderer.domElement);
@@ -474,14 +479,33 @@ class AudioVisualizer {
 
   generateValidCameraPath() {
     this.cameraPath = [];
-    this.pathLookAhead = 1; // Reduced lookahead for more direct focus
 
-    for (let i = 0; i < this.pathPoints.length; i++) {
+    for (let i = 0; i < this.pathPoints.length - 1; i++) {
       const currentPoint = this.pathPoints[i];
+      const nextPoint = this.pathPoints[i + 1];
+
+      // Direction vector from current to next point
+      const direction = new THREE.Vector3().subVectors(nextPoint, currentPoint).normalize();
+
+      // Offset the camera position slightly behind the current point along the direction vector
+      const cameraPosition = currentPoint
+        .clone()
+        .add(direction.clone().multiplyScalar(-2))
+        .setY(2);
+
       this.cameraPath.push({
-        position: currentPoint.clone().add(new THREE.Vector3(-2, 1.5, 2)),
+        position: cameraPosition,
+        lookAt: nextPoint.clone().setY(2),
       });
     }
+
+    // Add the last point
+    const lastPoint = this.pathPoints[this.pathPoints.length - 1];
+    const cameraPosition = lastPoint.clone().setY(2);
+    this.cameraPath.push({
+      position: cameraPosition,
+      lookAt: lastPoint.clone().add(new THREE.Vector3(0, 0, 1)).setY(2),
+    });
 
     this.currentWaypoint = 0;
     this.waypointTransition = 0;
@@ -566,7 +590,7 @@ class AudioVisualizer {
   }
 
   setupCameraPath() {
-    // ...empty implementation...
+    // ...existing code...
   }
 
   animate() {
@@ -576,36 +600,45 @@ class AudioVisualizer {
       this.updateAudioData();
     }
 
-    if (this.audio && !this.audio.paused && this.cameraPath && this.cameraPath.length > 1 && this.animationDuration) {
+    if (
+      this.audio &&
+      !this.audio.paused &&
+      this.cameraPath &&
+      this.cameraPath.length > 1 &&
+      this.animationDuration
+    ) {
       const progress = this.audio.currentTime / this.animationDuration;
-      const targetWaypoint = Math.floor(progress * (this.cameraPath.length - 1));
-      this.waypointTransition = progress * (this.cameraPath.length - 1) - targetWaypoint;
+      const totalWaypoints = this.cameraPath.length - 1;
+      const currentWaypointIndex = Math.min(
+        Math.floor(progress * totalWaypoints),
+        totalWaypoints - 1
+      );
+      const nextWaypointIndex = currentWaypointIndex + 1;
+      const waypointProgress = progress * totalWaypoints - currentWaypointIndex;
 
-      const currentWaypointClamped = Math.min(targetWaypoint, this.cameraPath.length - 2);
-      const nextWaypointClamped = Math.min(targetWaypoint + 1, this.cameraPath.length - 1);
+      const currentWaypoint = this.cameraPath[currentWaypointIndex];
+      const nextWaypoint = this.cameraPath[nextWaypointIndex];
 
-      const current = this.cameraPath[currentWaypointClamped];
-      const next = this.cameraPath[nextWaypointClamped];
-
-      if (current && next) {
+      if (currentWaypoint && nextWaypoint) {
         const newPos = new THREE.Vector3().lerpVectors(
-          current.position,
-          next.position,
-          this.waypointTransition
+          currentWaypoint.position,
+          nextWaypoint.position,
+          waypointProgress
+        );
+
+        const newLookAt = new THREE.Vector3().lerpVectors(
+          currentWaypoint.lookAt,
+          nextWaypoint.lookAt,
+          waypointProgress
         );
 
         if (!this.checkWallCollision(newPos)) {
           this.camera.position.copy(newPos);
-
-          // Calculate the direction to the next waypoint
-          const direction = new THREE.Vector3().subVectors(next.position, current.position).normalize();
-          const lookAtPosition = new THREE.Vector3().copy(newPos).add(direction);
-          this.camera.lookAt(lookAtPosition);
+          this.camera.lookAt(newLookAt);
         }
       }
     }
 
-    this.controls.update();
     this.renderer.render(this.scene, this.camera);
   }
 
