@@ -4,6 +4,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 class AudioVisualizer {
   constructor() {
     this.setupLoadingScreen();
+    this.mazeData = null;
   }
 
   setupLoadingScreen() {
@@ -71,33 +72,85 @@ class AudioVisualizer {
   }
 
   createScene() {
+    this.generateMazeData();
     this.createMaze();
     this.createAudioPath();
+    this.generateValidCameraPath();
   }
 
-  createMaze() {
-    // Create maze layout
-    this.rooms = [];
-    const mazeSize = 5; // 5x5 grid of rooms
-    const roomSize = 10;
-    const wallThickness = 0.5;
+  generateMazeData() {
+    const mazeSize = 5;
+    this.mazeData = Array(mazeSize).fill().map(() => 
+      Array(mazeSize).fill().map(() => ({
+        north: false,
+        south: false,
+        east: false,
+        west: false,
+        visited: false
+      }))
+    );
 
-    for (let x = 0; x < mazeSize; x++) {
-      for (let z = 0; z < mazeSize; z++) {
-        const posX = (x - Math.floor(mazeSize/2)) * roomSize;
-        const posZ = (z - Math.floor(mazeSize/2)) * roomSize;
-        
-        const room = this.createRoom(roomSize, wallThickness, posX, posZ);
-        this.rooms.push(room);
-        this.scene.add(room);
+    // Depth-first search maze generation
+    const stack = [];
+    const startX = Math.floor(mazeSize/2);
+    const startZ = Math.floor(mazeSize/2);
+    
+    this.mazeData[startX][startZ].visited = true;
+    stack.push([startX, startZ]);
+
+    while (stack.length > 0) {
+      const [currentX, currentZ] = stack[stack.length - 1];
+      const neighbors = this.getUnvisitedNeighbors(currentX, currentZ);
+
+      if (neighbors.length === 0) {
+        stack.pop();
+        continue;
+      }
+
+      const [nextX, nextZ] = neighbors[Math.floor(Math.random() * neighbors.length)];
+      this.createPassage(currentX, currentZ, nextX, nextZ);
+      
+      this.mazeData[nextX][nextZ].visited = true;
+      stack.push([nextX, nextZ]);
+    }
+  }
+
+  getUnvisitedNeighbors(x, z) {
+    const neighbors = [];
+    const directions = [
+      [x, z-1, 'north'], [x, z+1, 'south'],
+      [x+1, z, 'east'], [x-1, z, 'west']
+    ];
+
+    for (const [newX, newZ] of directions) {
+      if (this.isValidCell(newX, newZ) && !this.mazeData[newX][newZ].visited) {
+        neighbors.push([newX, newZ]);
       }
     }
-
-    // Add connecting corridors
-    this.createCorridors(mazeSize, roomSize);
+    return neighbors;
   }
 
-  createRoom(size, wallThickness, x, z) {
+  isValidCell(x, z) {
+    return x >= 0 && x < this.mazeData.length && z >= 0 && z < this.mazeData.length;
+  }
+
+  createPassage(x1, z1, x2, z2) {
+    if (x2 > x1) {
+      this.mazeData[x1][z1].east = true;
+      this.mazeData[x2][z2].west = true;
+    } else if (x2 < x1) {
+      this.mazeData[x1][z1].west = true;
+      this.mazeData[x2][z2].east = true;
+    } else if (z2 > z1) {
+      this.mazeData[x1][z1].south = true;
+      this.mazeData[x2][z2].north = true;
+    } else if (z2 < z1) {
+      this.mazeData[x1][z1].north = true;
+      this.mazeData[x2][z2].south = true;
+    }
+  }
+
+  createRoom(size, wallThickness, x, z, roomData) {
     const room = new THREE.Group();
     
     // Floor
@@ -106,9 +159,11 @@ class AudioVisualizer {
       color: 0x8B4513,
       metalness: 0.3,
       roughness: 0.7,
+      side: THREE.DoubleSide
     });
     const floor = new THREE.Mesh(floorGeometry, floorMaterial);
     floor.rotation.x = -Math.PI / 2;
+    floor.position.y = 0;
     room.add(floor);
 
     // Ceiling
@@ -116,99 +171,156 @@ class AudioVisualizer {
     ceiling.position.y = size;
     room.add(ceiling);
 
-    // Walls
-    const wallGeometry = new THREE.BoxGeometry(size, size, wallThickness);
-    const wallMaterial = new THREE.MeshStandardMaterial({
-      color: 0xD2B48C,
-      metalness: 0.2,
-      roughness: 0.8,
+    const doorWidth = 3;
+    const doorHeight = 6;
+    
+    // Create walls with doorways based on roomData
+    const walls = [
+      { direction: 'north', rotation: 0, position: [0, 0, -size/2], hasDoor: roomData.north },
+      { direction: 'south', rotation: 0, position: [0, 0, size/2], hasDoor: roomData.south },
+      { direction: 'east', rotation: Math.PI/2, position: [size/2, 0, 0], hasDoor: roomData.east },
+      { direction: 'west', rotation: Math.PI/2, position: [-size/2, 0, 0], hasDoor: roomData.west }
+    ];
+
+    walls.forEach(wall => {
+      if (wall.hasDoor) {
+        // Create wall segments around door
+        const sideWallGeometry = new THREE.BoxGeometry((size - doorWidth) / 2, size, wallThickness);
+        const wallMaterial = new THREE.MeshStandardMaterial({
+          color: 0xD2B48C,
+          metalness: 0.2,
+          roughness: 0.8
+        });
+
+        // Left wall segment
+        const leftWall = new THREE.Mesh(sideWallGeometry, wallMaterial);
+        leftWall.position.set(
+          wall.position[0] - (wall.rotation ? doorWidth/2 + (size-doorWidth)/4 : 0),
+          wall.position[1] + size/2,
+          wall.position[2] - (!wall.rotation ? doorWidth/2 + (size-doorWidth)/4 : 0)
+        );
+        leftWall.rotation.y = wall.rotation;
+        room.add(leftWall);
+
+        // Right wall segment
+        const rightWall = new THREE.Mesh(sideWallGeometry, wallMaterial);
+        rightWall.position.set(
+          wall.position[0] + (wall.rotation ? doorWidth/2 + (size-doorWidth)/4 : 0),
+          wall.position[1] + size/2,
+          wall.position[2] + (!wall.rotation ? doorWidth/2 + (size-doorWidth)/4 : 0)
+        );
+        rightWall.rotation.y = wall.rotation;
+        room.add(rightWall);
+
+        // Top of doorway
+        const topGeometry = new THREE.BoxGeometry(doorWidth, size - doorHeight, wallThickness);
+        const topWall = new THREE.Mesh(topGeometry, wallMaterial);
+        topWall.position.set(
+          wall.position[0],
+          wall.position[1] + size - (size - doorHeight)/2,
+          wall.position[2]
+        );
+        topWall.rotation.y = wall.rotation;
+        room.add(topWall);
+      } else {
+        // Full wall if no door
+        const wallGeometry = new THREE.BoxGeometry(size, size, wallThickness);
+        const wallMaterial = new THREE.MeshStandardMaterial({
+          color: 0xD2B48C,
+          metalness: 0.2,
+          roughness: 0.8
+        });
+        const fullWall = new THREE.Mesh(wallGeometry, wallMaterial);
+        fullWall.position.set(
+          wall.position[0],
+          wall.position[1] + size/2,
+          wall.position[2]
+        );
+        fullWall.rotation.y = wall.rotation;
+        room.add(fullWall);
+      }
     });
-
-    // North wall
-    const northWall = new THREE.Mesh(wallGeometry, wallMaterial);
-    northWall.position.z = -size/2;
-    northWall.position.y = size/2;
-    room.add(northWall);
-
-    // South wall
-    const southWall = northWall.clone();
-    southWall.position.z = size/2;
-    room.add(southWall);
-
-    // East wall
-    const eastWall = new THREE.Mesh(wallGeometry, wallMaterial);
-    eastWall.rotation.y = Math.PI/2;
-    eastWall.position.x = size/2;
-    eastWall.position.y = size/2;
-    room.add(eastWall);
-
-    // West wall
-    const westWall = eastWall.clone();
-    westWall.position.x = -size/2;
-    room.add(westWall);
 
     room.position.set(x, 0, z);
     return room;
   }
 
-  createCorridors(mazeSize, roomSize) {
-    // Create a simple maze pattern connecting rooms
+  createMaze() {
+    this.rooms = [];
+    const mazeSize = this.mazeData.length;
+    const roomSize = 10;
+    const wallThickness = 0.5;
+
     for (let x = 0; x < mazeSize; x++) {
       for (let z = 0; z < mazeSize; z++) {
-        if (Math.random() > 0.3) {
-          if (x < mazeSize - 1) this.connectRooms(x, z, x + 1, z, mazeSize, roomSize);
-        }
-        if (Math.random() > 0.3) {
-          if (z < mazeSize - 1) this.connectRooms(x, z, x, z + 1, mazeSize, roomSize);
-        }
+        const posX = (x - Math.floor(mazeSize/2)) * roomSize;
+        const posZ = (z - Math.floor(mazeSize/2)) * roomSize;
+        
+        const room = this.createRoom(roomSize, wallThickness, posX, posZ, this.mazeData[x][z]);
+        this.rooms.push(room);
+        this.scene.add(room);
       }
     }
   }
 
-  connectRooms(x1, z1, x2, z2, mazeSize, roomSize) {
-    const corridor = new THREE.Group();
-    const corridorWidth = 3;
-    const corridorHeight = 4;
+  generateValidCameraPath() {
+    // Find path from center to edge using breadth-first search
+    const mazeSize = this.mazeData.length;
+    const startX = Math.floor(mazeSize/2);
+    const startZ = Math.floor(mazeSize/2);
     
-    const geometry = new THREE.BoxGeometry(
-      x1 === x2 ? corridorWidth : roomSize,
-      corridorHeight,
-      z1 === z2 ? corridorWidth : roomSize
-    );
+    const queue = [[startX, startZ]];
+    const visited = new Set();
+    const parent = new Map();
     
-    const material = new THREE.MeshStandardMaterial({
-      color: 0xD2B48C,
-      metalness: 0.2,
-      roughness: 0.8,
-      side: THREE.DoubleSide
-    });
+    visited.add(`${startX},${startZ}`);
 
-    const corridor_mesh = new THREE.Mesh(geometry, material);
-    corridor.add(corridor_mesh);
+    while (queue.length > 0) {
+      const [currentX, currentZ] = queue.shift();
+      
+      // Check if we've reached the edge of the maze
+      if (currentX === 0 || currentX === mazeSize-1 || currentZ === 0 || currentZ === mazeSize-1) {
+        // Build path by backtracking through parents
+        this.cameraWaypoints = [];
+        let current = [currentX, currentZ];
+        
+        while (current) {
+          const [x, z] = current;
+          const worldX = (x - Math.floor(mazeSize/2)) * 10;
+          const worldZ = (z - Math.floor(mazeSize/2)) * 10;
+          this.cameraWaypoints.unshift(new THREE.Vector3(worldX, 2, worldZ));
+          current = parent.get(`${x},${z}`);
+        }
+        
+        break;
+      }
 
-    const posX = (x1 - Math.floor(mazeSize/2)) * roomSize;
-    const posZ = (z1 - Math.floor(mazeSize/2)) * roomSize;
-    
-    corridor.position.set(posX, corridorHeight/2, posZ);
-    this.scene.add(corridor);
+      // Check all valid neighbors
+      const directions = [
+        [currentX, currentZ-1, 'north'],
+        [currentX, currentZ+1, 'south'],
+        [currentX+1, currentZ, 'east'],
+        [currentX-1, currentZ, 'west']
+      ];
+
+      for (const [nextX, nextZ, direction] of directions) {
+        const key = `${nextX},${nextZ}`;
+        if (!visited.has(key) && 
+            this.isValidCell(nextX, nextZ) && 
+            this.mazeData[currentX][currentZ][direction]) {
+          queue.push([nextX, nextZ]);
+          visited.add(key);
+          parent.set(key, [currentX, currentZ]);
+        }
+      }
+    }
+
+    this.currentWaypoint = 0;
+    this.waypointTransition = 0;
   }
 
   setupCameraPath() {
     // Create camera waypoints through the maze
-    this.cameraWaypoints = [
-      new THREE.Vector3(0, 2, 0), // Start in center
-      new THREE.Vector3(10, 2, 0),
-      new THREE.Vector3(10, 2, 10),
-      new THREE.Vector3(0, 2, 10),
-      new THREE.Vector3(-10, 2, 10),
-      new THREE.Vector3(-10, 2, 0),
-      new THREE.Vector3(-10, 2, -10),
-      new THREE.Vector3(0, 2, -10),
-      new THREE.Vector3(10, 2, -10)
-    ];
-
-    this.currentWaypoint = 0;
-    this.waypointTransition = 0;
   }
 
   setupAudio() {
