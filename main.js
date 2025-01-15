@@ -474,16 +474,13 @@ class AudioVisualizer {
 
   generateValidCameraPath() {
     this.cameraPath = [];
-    this.pathLookAhead = 5;
+    this.pathLookAhead = 1; // Reduced lookahead
 
     for (let i = 0; i < this.pathPoints.length; i++) {
       const currentPoint = this.pathPoints[i];
-      const lookAtIndex = Math.min(i + this.pathLookAhead, this.pathPoints.length - 1);
-      const lookAtPoint = this.pathPoints[lookAtIndex];
-
       this.cameraPath.push({
-        position: currentPoint.clone().add(new THREE.Vector3(-2, 1.5, 2)),
-        lookAt: lookAtPoint
+        position: currentPoint.clone().add(new THREE.Vector3(0, 1.5, 0)), // Camera slightly above the path
+        lookAtTargetIndex: Math.min(i + this.pathLookAhead, this.pathPoints.length - 1)
       });
     }
 
@@ -585,7 +582,7 @@ class AudioVisualizer {
       const targetWaypoint = Math.floor(progress * (this.cameraPath.length - 1));
       this.waypointTransition = progress * (this.cameraPath.length - 1) - targetWaypoint;
 
-      const currentWaypointClamped = Math.min(targetWaypoint, this.cameraPath.length - 2);
+      const currentWaypointClamped = Math.min(targetWaypoint, this.cameraPath.length - 1);
       const nextWaypointClamped = Math.min(targetWaypoint + 1, this.cameraPath.length - 1);
 
       const current = this.cameraPath[currentWaypointClamped];
@@ -598,15 +595,12 @@ class AudioVisualizer {
           this.waypointTransition
         );
 
-        const newLookAt = new THREE.Vector3().lerpVectors(
-          current.lookAt,
-          next.lookAt,
-          this.waypointTransition
-        );
-
         if (!this.checkWallCollision(newPos)) {
           this.camera.position.copy(newPos);
-          this.camera.lookAt(newLookAt);
+
+          // Make the camera face the direction of travel
+          const lookAtTarget = this.pathPoints[next.lookAtTargetIndex];
+          this.camera.lookAt(lookAtTarget);
         }
       }
     }
