@@ -474,13 +474,12 @@ class AudioVisualizer {
 
   generateValidCameraPath() {
     this.cameraPath = [];
-    this.pathLookAhead = 1; // Reduced lookahead
+    this.pathLookAhead = 1; // Reduced lookahead for more direct focus
 
     for (let i = 0; i < this.pathPoints.length; i++) {
       const currentPoint = this.pathPoints[i];
       this.cameraPath.push({
-        position: currentPoint.clone().add(new THREE.Vector3(0, 1.5, 0)), // Camera slightly above the path
-        lookAtTargetIndex: Math.min(i + this.pathLookAhead, this.pathPoints.length - 1)
+        position: currentPoint.clone().add(new THREE.Vector3(-2, 1.5, 2)),
       });
     }
 
@@ -567,7 +566,7 @@ class AudioVisualizer {
   }
 
   setupCameraPath() {
-    // ...existing code...
+    // ...empty implementation...
   }
 
   animate() {
@@ -582,7 +581,7 @@ class AudioVisualizer {
       const targetWaypoint = Math.floor(progress * (this.cameraPath.length - 1));
       this.waypointTransition = progress * (this.cameraPath.length - 1) - targetWaypoint;
 
-      const currentWaypointClamped = Math.min(targetWaypoint, this.cameraPath.length - 1);
+      const currentWaypointClamped = Math.min(targetWaypoint, this.cameraPath.length - 2);
       const nextWaypointClamped = Math.min(targetWaypoint + 1, this.cameraPath.length - 1);
 
       const current = this.cameraPath[currentWaypointClamped];
@@ -598,9 +597,10 @@ class AudioVisualizer {
         if (!this.checkWallCollision(newPos)) {
           this.camera.position.copy(newPos);
 
-          // Make the camera face the direction of travel
-          const lookAtTarget = this.pathPoints[next.lookAtTargetIndex];
-          this.camera.lookAt(lookAtTarget);
+          // Calculate the direction to the next waypoint
+          const direction = new THREE.Vector3().subVectors(next.position, current.position).normalize();
+          const lookAtPosition = new THREE.Vector3().copy(newPos).add(direction);
+          this.camera.lookAt(lookAtPosition);
         }
       }
     }
