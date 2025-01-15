@@ -433,37 +433,30 @@ class AudioVisualizer {
   }
 
   createAudioPath() {
-    // Create audio path following the valid maze path
     this.pathPoints = [];
     this.pathSegments = [];
     
-    // Create path points along the valid path with proper room-center alignment
-    for (let i = 0; i < this.worldPath.length; i++) {
-      const point = this.worldPath[i];
-      const numSubPoints = 8;
+    // Create smooth interpolated path points
+    for (let i = 0; i < this.worldPath.length - 1; i++) {
+      const current = this.worldPath[i];
+      const next = this.worldPath[i + 1];
+      const numSubPoints = 16; // Increase number of points for smoother path
       
-      if (i < this.worldPath.length - 1) {
-        const nextPoint = this.worldPath[i + 1];
-        const direction = new THREE.Vector3().subVectors(nextPoint, point);
-        
-        // Check if path would intersect with walls
-        const isValidPath = this.checkPathValidity(point, nextPoint);
-        
-        if (isValidPath) {
-          for (let j = 0; j < numSubPoints; j++) {
-            const t = j / numSubPoints;
-            const subPoint = new THREE.Vector3().lerpVectors(point, nextPoint, t);
-            // Adjust height to avoid floor clipping
-            subPoint.y = 2;
-            this.pathPoints.push(subPoint);
-          }
-        }
+      const direction = new THREE.Vector3().subVectors(next, current);
+      const distance = direction.length();
+      const stepSize = distance / numSubPoints;
+      
+      for (let j = 0; j <= numSubPoints; j++) {
+        const t = j / numSubPoints;
+        const subPoint = new THREE.Vector3().lerpVectors(current, next, t);
+        subPoint.y = 2; // Keep consistent height
+        this.pathPoints.push(subPoint);
       }
     }
 
     // Create visual segments for the audio path
     this.pathPoints.forEach((point, i) => {
-      const geometry = new THREE.BoxGeometry(0.3, 0.1, 0.3);
+      const geometry = new THREE.BoxGeometry(0.2, 0.1, 0.2);
       const material = new THREE.MeshStandardMaterial({
         color: 0xFFFFFF,
         emissive: 0xFFFFFF,
@@ -479,51 +472,68 @@ class AudioVisualizer {
     });
   }
 
-  checkPathValidity(start, end) {
-    // Create a raycaster to check for wall intersections
-    const direction = new THREE.Vector3().subVectors(end, start).normalize();
-    const distance = start.distanceTo(end);
-    const raycaster = new THREE.Raycaster(start, direction, 0, distance);
-    
-    // Get all potential wall intersections
-    const intersects = raycaster.intersectObjects(this.scene.children, true);
-    
-    // Filter out non-wall intersections (floor, ceiling, path segments)
-    const wallIntersections = intersects.filter(intersection => {
-      const object = intersection.object;
-      return object.geometry instanceof THREE.BoxGeometry && 
-             object.geometry.parameters.height === 10; // Wall height
-    });
-    
-    return wallIntersections.length === 0;
-  }
-
   generateValidCameraPath() {
-    // Reverse the path to start from the center
-    this.cameraWaypoints = [...this.worldPath].reverse();
-    
-    // Ensure proper forward-facing movement
     this.cameraPath = [];
-    for (let i = 0; i < this.cameraWaypoints.length - 1; i++) {
-      const current = this.cameraWaypoints[i];
-      const next = this.cameraWaypoints[i + 1];
+    this.pathLookAhead = 3; // Number of points to look ahead for smooth camera rotation
+    
+    // Create camera positions and target points
+    for (let i = 0; i < this.pathPoints.length; i++) {
+      const currentPoint = this.pathPoints[i];
       
-      // Calculate direction vector
-      const direction = new THREE.Vector3().subVectors(next, current);
+      // Calculate look-at point (several points ahead for smooth rotation)
+      const lookAheadIndex = Math.min(i + this.pathLookAhead, this.pathPoints.length - 1);
+      const lookAtPoint = this.pathPoints[lookAheadIndex];
       
-      // Create camera position slightly behind the current point
-      const cameraOffset = new THREE.Vector3().copy(direction).normalize().multiplyScalar(-2);
-      const cameraPos = new THREE.Vector3().addVectors(current, cameraOffset);
-      cameraPos.y = 2; // Maintain consistent camera height
+      // Calculate direction vector for camera offset
+      const direction = new THREE.Vector3();
+      if (i < this.pathPoints.length - 1) {
+        direction.subVectors(this.pathPoints[i + 1], currentPoint).normalize();
+      } else {
+        direction.subVectors(currentPoint, this.pathPoints[i - 1]).normalize();
+      }
       
-      this.cameraPath.push({
-        position: cameraPos,
-        lookAt: next
-      });
+      // Position camera behind the current point
+      const cameraOffset = new THREE.Vector3()
+        .copy(direction)
+        .multiplyScalar(-3) // Distance behind the path
+        .add(new THREE.Vector3(0, 1, 0)); // Slight height offset
+      
+      const cameraPos = new THREE.Vector3().addVectors(currentPoint, cameraOffset);
+      
+      // Check if camera position is valid (not inside walls)
+      if (!this.checkWallCollision(cameraPos)) {
+        this.cameraPath.push({
+          position: cameraPos,
+          lookAt: lookAtPoint
+        });
+      }
     }
     
     this.currentWaypoint = 0;
     this.waypointTransition = 0;
+  }
+
+  checkWallCollision(position) {
+    // Cast rays in multiple directions to check for wall proximity
+    const directions = [
+      new THREE.Vector3(1, 0, 0),
+      new THREE.Vector3(-1, 0, 0),
+      new THREE.Vector3(0, 0, 1),
+      new THREE.Vector3(0, 0, -1),
+    ];
+    
+    for (const direction of directions) {
+      const raycaster = new THREE.Raycaster(position, direction, 0, 1.5); // Minimum distance from walls
+      const intersects = raycaster.intersectObjects(this.scene.children, true);
+      
+      for (const intersect of intersects) {
+        if (intersect.object.geometry instanceof THREE.BoxGeometry && 
+            intersect.object.geometry.parameters.height === 10) { // Wall height
+          return true; // Collision detected
+        }
+      }
+    }
+    return false;
   }
 
   setupAudio() {
@@ -575,12 +585,6 @@ class AudioVisualizer {
     // Create camera waypoints through the maze
   }
 
-  onWindowResize() {
-    this.camera.aspect = window.innerWidth / window.innerHeight;
-    this.camera.updateProjectionMatrix();
-    this.renderer.setSize(window.innerWidth, window.innerHeight);
-  }
-
   animate() {
     requestAnimationFrame(() => this.animate());
     
@@ -588,54 +592,48 @@ class AudioVisualizer {
       this.updateAudioData();
     }
     
-    // Camera movement along valid path
-    if (this.audio && !this.audio.paused && this.cameraPath) {
-      this.waypointTransition += 0.001;
+    // Camera movement along path
+    if (this.audio && !this.audio.paused && this.cameraPath && this.cameraPath.length > 1) {
+      this.waypointTransition += 0.002; // Adjust speed
+      
       if (this.waypointTransition >= 1) {
         this.waypointTransition = 0;
         this.currentWaypoint = (this.currentWaypoint + 1) % (this.cameraPath.length - 1);
       }
 
-      if (this.currentWaypoint < this.cameraPath.length - 1) {
-        const current = this.cameraPath[this.currentWaypoint];
-        const next = this.cameraPath[this.currentWaypoint + 1];
+      const current = this.cameraPath[this.currentWaypoint];
+      const next = this.cameraPath[this.currentWaypoint + 1];
+      
+      if (current && next) {
+        // Smooth camera position and rotation interpolation
+        const newPos = new THREE.Vector3().lerpVectors(
+          current.position,
+          next.position,
+          this.waypointTransition
+        );
         
-        if (current && next) {
-          // Smooth camera position transition
-          const newPos = new THREE.Vector3().lerpVectors(
-            current.position,
-            next.position,
-            this.waypointTransition
-          );
-          
-          // Smooth look-at transition
-          const newLookAt = new THREE.Vector3().lerpVectors(
-            current.lookAt,
-            next.lookAt,
-            this.waypointTransition
-          );
-          
-          // Check for wall collisions before updating camera position
-          const direction = new THREE.Vector3().subVectors(newPos, this.camera.position);
-          const raycaster = new THREE.Raycaster(this.camera.position, direction.normalize());
-          const intersects = raycaster.intersectObjects(this.scene.children, true);
-          
-          const wallCollision = intersects.some(intersection => 
-            intersection.object.geometry instanceof THREE.BoxGeometry && 
-            intersection.object.geometry.parameters.height === 10 &&
-            intersection.distance < direction.length()
-          );
-          
-          if (!wallCollision) {
-            this.camera.position.copy(newPos);
-            this.camera.lookAt(newLookAt);
-          }
+        const newLookAt = new THREE.Vector3().lerpVectors(
+          current.lookAt,
+          next.lookAt,
+          this.waypointTransition
+        );
+        
+        // Only update if no wall collision
+        if (!this.checkWallCollision(newPos)) {
+          this.camera.position.copy(newPos);
+          this.camera.lookAt(newLookAt);
         }
       }
     }
     
     this.controls.update();
     this.renderer.render(this.scene, this.camera);
+  }
+
+  onWindowResize() {
+    this.camera.aspect = window.innerWidth / window.innerHeight;
+    this.camera.updateProjectionMatrix();
+    this.renderer.setSize(window.innerWidth, window.innerHeight);
   }
 }
 
