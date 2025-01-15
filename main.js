@@ -39,75 +39,221 @@ class AudioVisualizer {
   }
 
   createScene() {
-    // Create palace room
-    this.createPalaceRoom();
+    // Create detailed palace room
+    this.createDetailedPalace();
     
-    // Create audio-reactive elements
-    this.createAudioReactiveElements();
+    // Create audio-reactive path
+    this.createAudioPath();
   }
 
-  createPalaceRoom() {
-    // Floor
-    const floorGeometry = new THREE.PlaneGeometry(10, 10);
+  createDetailedPalace() {
+    // Enhanced Floor with texture pattern
+    const floorGeometry = new THREE.PlaneGeometry(20, 20, 20, 20);
     const floorMaterial = new THREE.MeshStandardMaterial({
-      color: 0x444444,
-      metalness: 0.5,
-      roughness: 0.5
+      color: 0x8B4513,
+      metalness: 0.3,
+      roughness: 0.7,
     });
     const floor = new THREE.Mesh(floorGeometry, floorMaterial);
     floor.rotation.x = -Math.PI / 2;
     this.scene.add(floor);
 
-    // Walls
-    const wallsGeometry = new THREE.BoxGeometry(10, 6, 10);
+    // Detailed Walls with archways
+    this.createWalls();
+    
+    // Ornate Ceiling
+    this.createCeiling();
+    
+    // Decorative Elements
+    this.addDecorativeElements();
+  }
+
+  createWalls() {
+    // Main walls
+    const wallsGeometry = new THREE.BoxGeometry(20, 12, 20);
     const wallsMaterial = new THREE.MeshStandardMaterial({
-      color: 0x666666,
-      metalness: 0.3,
-      roughness: 0.7,
+      color: 0xD2B48C,
+      metalness: 0.2,
+      roughness: 0.8,
       side: THREE.BackSide
     });
     const walls = new THREE.Mesh(wallsGeometry, wallsMaterial);
-    walls.position.y = 3;
+    walls.position.y = 6;
     this.scene.add(walls);
 
-    // Decorative pillars
-    for (let i = 0; i < 4; i++) {
-      const pillarGeometry = new THREE.CylinderGeometry(0.2, 0.2, 6, 8);
-      const pillarMaterial = new THREE.MeshStandardMaterial({
-        color: 0x888888,
-        metalness: 0.7,
-        roughness: 0.3
+    // Create archways
+    this.createArchways();
+  }
+
+  createArchways() {
+    const archPositions = [
+      { x: 0, z: -10, rotation: 0 }, // North
+      { x: 0, z: 10, rotation: Math.PI }, // South
+      { x: -10, z: 0, rotation: -Math.PI / 2 }, // West
+      { x: 10, z: 0, rotation: Math.PI / 2 } // East
+    ];
+
+    archPositions.forEach(pos => {
+      const archway = this.createArchway();
+      archway.position.set(pos.x, 0, pos.z);
+      archway.rotation.y = pos.rotation;
+      this.scene.add(archway);
+    });
+  }
+
+  createArchway() {
+    const group = new THREE.Group();
+    
+    // Arch frame
+    const archShape = new THREE.Shape();
+    archShape.moveTo(-2, 0);
+    archShape.lineTo(-2, 4);
+    archShape.quadraticCurveTo(-2, 6, 0, 6);
+    archShape.quadraticCurveTo(2, 6, 2, 4);
+    archShape.lineTo(2, 0);
+
+    const extrudeSettings = {
+      steps: 1,
+      depth: 1,
+      bevelEnabled: true,
+      bevelThickness: 0.2,
+      bevelSize: 0.2,
+      bevelSegments: 3
+    };
+
+    const archGeometry = new THREE.ExtrudeGeometry(archShape, extrudeSettings);
+    const archMaterial = new THREE.MeshStandardMaterial({
+      color: 0x8B4513,
+      metalness: 0.4,
+      roughness: 0.6
+    });
+    
+    const arch = new THREE.Mesh(archGeometry, archMaterial);
+    group.add(arch);
+
+    return group;
+  }
+
+  createCeiling() {
+    const ceilingGeometry = new THREE.PlaneGeometry(20, 20, 20, 20);
+    const ceilingMaterial = new THREE.MeshStandardMaterial({
+      color: 0xD2B48C,
+      metalness: 0.3,
+      roughness: 0.7,
+    });
+    const ceiling = new THREE.Mesh(ceilingGeometry, ceilingMaterial);
+    ceiling.rotation.x = Math.PI / 2;
+    ceiling.position.y = 12;
+    this.scene.add(ceiling);
+
+    // Add chandelier
+    this.createChandelier();
+  }
+
+  createChandelier() {
+    const chandelier = new THREE.Group();
+    
+    // Central piece
+    const centerGeometry = new THREE.SphereGeometry(0.5, 16, 16);
+    const centerMaterial = new THREE.MeshStandardMaterial({
+      color: 0xFFD700,
+      metalness: 1,
+      roughness: 0.2
+    });
+    const center = new THREE.Mesh(centerGeometry, centerMaterial);
+    chandelier.add(center);
+
+    // Light sources
+    for (let i = 0; i < 8; i++) {
+      const angle = (i / 8) * Math.PI * 2;
+      const radius = 1;
+
+      const light = new THREE.PointLight(0xFFD700, 0.5, 10);
+      light.position.x = Math.cos(angle) * radius;
+      light.position.z = Math.sin(angle) * radius;
+      light.position.y = -0.5;
+      chandelier.add(light);
+
+      // Decorative bulb
+      const bulbGeometry = new THREE.SphereGeometry(0.1, 8, 8);
+      const bulbMaterial = new THREE.MeshStandardMaterial({
+        color: 0xFFFFFF,
+        emissive: 0xFFFF00,
+        emissiveIntensity: 0.5
       });
+      const bulb = new THREE.Mesh(bulbGeometry, bulbMaterial);
+      bulb.position.copy(light.position);
+      chandelier.add(bulb);
+    }
+
+    chandelier.position.y = 11;
+    this.scene.add(chandelier);
+  }
+
+  addDecorativeElements() {
+    // Add pillars
+    for (let i = 0; i < 8; i++) {
+      const angle = (i / 8) * Math.PI * 2;
+      const radius = 8;
+      
+      const pillarGeometry = new THREE.CylinderGeometry(0.4, 0.5, 12, 8);
+      const pillarMaterial = new THREE.MeshStandardMaterial({
+        color: 0xD2B48C,
+        metalness: 0.4,
+        roughness: 0.6
+      });
+      
       const pillar = new THREE.Mesh(pillarGeometry, pillarMaterial);
-      pillar.position.y = 3;
-      pillar.position.x = (i < 2 ? -4 : 4);
-      pillar.position.z = (i % 2 === 0 ? -4 : 4);
+      pillar.position.set(
+        Math.cos(angle) * radius,
+        6,
+        Math.sin(angle) * radius
+      );
       this.scene.add(pillar);
+
+      // Add pillar capitals
+      const capitalGeometry = new THREE.BoxGeometry(1, 0.5, 1);
+      const capital = new THREE.Mesh(capitalGeometry, pillarMaterial);
+      capital.position.set(
+        Math.cos(angle) * radius,
+        11.75,
+        Math.sin(angle) * radius
+      );
+      this.scene.add(capital);
     }
   }
 
-  createAudioReactiveElements() {
-    // Create bars array
-    this.bars = [];
-    const barCount = 64;
+  createAudioPath() {
+    this.pathPoints = [];
+    const pathLength = 64;
     
-    for (let i = 0; i < barCount; i++) {
-      const geometry = new THREE.BoxGeometry(0.1, 1, 0.1);
+    // Create a spiral path
+    for (let i = 0; i < pathLength; i++) {
+      const t = i / pathLength;
+      const angle = t * Math.PI * 4; // 2 complete spirals
+      const radius = 8 - (t * 6); // Spiral inwards
+      
+      const x = Math.cos(angle) * radius;
+      const z = Math.sin(angle) * radius;
+      this.pathPoints.push(new THREE.Vector3(x, 0.5, z));
+    }
+
+    // Create path segments
+    this.pathSegments = [];
+    for (let i = 0; i < pathLength - 1; i++) {
+      const geometry = new THREE.BoxGeometry(0.3, 0.1, 0.3);
       const material = new THREE.MeshStandardMaterial({
-        color: new THREE.Color().setHSL(i / barCount, 0.8, 0.5),
-        metalness: 0.8,
-        roughness: 0.2
+        color: 0xFFFFFF,
+        emissive: 0xFFFFFF,
+        emissiveIntensity: 0,
+        transparent: true,
+        opacity: 0.8
       });
-      const bar = new THREE.Mesh(geometry, material);
       
-      const angle = (i / barCount) * Math.PI * 2;
-      const radius = 3;
-      bar.position.x = Math.cos(angle) * radius;
-      bar.position.z = Math.sin(angle) * radius;
-      bar.position.y = 2;
-      
-      this.scene.add(bar);
-      this.bars.push(bar);
+      const segment = new THREE.Mesh(geometry, material);
+      segment.position.copy(this.pathPoints[i]);
+      this.scene.add(segment);
+      this.pathSegments.push(segment);
     }
   }
 
@@ -139,15 +285,20 @@ class AudioVisualizer {
   updateAudioData() {
     this.analyser.getByteFrequencyData(this.dataArray);
     
-    // Update bars based on audio data
-    for (let i = 0; i < this.bars.length; i++) {
+    // Update path segments based on audio data
+    for (let i = 0; i < this.pathSegments.length; i++) {
       const value = this.dataArray[i] || 0;
-      const scale = (value / 255) * 3 + 0.2;
-      this.bars[i].scale.y = scale;
+      const intensity = value / 255;
       
-      // Update color based on intensity
-      this.bars[i].material.color.setHSL(i / this.bars.length, 0.8, scale / 3);
-      this.bars[i].material.emissive.setHSL(i / this.bars.length, 0.8, scale / 6);
+      const segment = this.pathSegments[i];
+      segment.position.y = 0.5 + intensity * 1.5;
+      segment.material.emissiveIntensity = intensity;
+      segment.scale.y = 1 + intensity * 2;
+      
+      // Color gradient based on intensity
+      const hue = 0.6 - intensity * 0.6; // Blue to red
+      segment.material.color.setHSL(hue, 1, 0.5);
+      segment.material.emissive.setHSL(hue, 1, 0.5);
     }
   }
 
