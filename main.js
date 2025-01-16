@@ -23,8 +23,8 @@ class AudioVisualizer {
     await this.loadResources();
     this.setup();
     this.createScene();
-    await this.setupAudio();
-    this.setupCameraPath();
+    this.setupAudio();
+    this.generateValidCameraPath();
     this.animate();
 
     // Fade out loading screen and fade in experience
@@ -34,6 +34,7 @@ class AudioVisualizer {
 
     setTimeout(() => {
       this.loadingScreen.style.display = 'none';
+      this.audio.play(); // Start the audio playback
     }, 1000);
   }
 
@@ -44,62 +45,6 @@ class AudioVisualizer {
       await new Promise(resolve => setTimeout(resolve, 20));
       this.progressBar.style.width = `${(i + 1) / totalSteps * 100}%`;
     }
-
-    // Load textures for wall paintings and decorations
-    await this.loadTextures();
-  }
-
-  async loadTextures() {
-    // Generate procedural textures
-    this.textures = {};
-
-    const generateCanvasTexture = (drawFunction) => {
-      const canvas = document.createElement('canvas');
-      canvas.width = 512;
-      canvas.height = 512;
-      const context = canvas.getContext('2d');
-      drawFunction(context, canvas);
-      const texture = new THREE.CanvasTexture(canvas);
-      return texture;
-    };
-
-    // Example wall painting texture
-    this.textures.wallPainting = generateCanvasTexture((ctx, canvas) => {
-      // Draw an abstract pattern
-      ctx.fillStyle = '#333';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.fillStyle = '#fff';
-      for (let i = 0; i < 100; i++) {
-        ctx.beginPath();
-        ctx.arc(
-          Math.random() * canvas.width,
-          Math.random() * canvas.height,
-          Math.random() * 50,
-          0,
-          Math.PI * 2
-        );
-        ctx.fill();
-      }
-    });
-
-    // Example decorative floor texture
-    this.textures.decorative = generateCanvasTexture((ctx, canvas) => {
-      ctx.fillStyle = '#555';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.strokeStyle = '#888';
-      ctx.lineWidth = 2;
-      for (let i = 0; i < 20; i++) {
-        ctx.beginPath();
-        ctx.arc(
-          canvas.width / 2,
-          canvas.height / 2,
-          i * 20,
-          0,
-          Math.PI * 2
-        );
-        ctx.stroke();
-      }
-    });
   }
 
   setup() {
@@ -123,11 +68,11 @@ class AudioVisualizer {
     this.camera.position.set(0, 2, 0);
 
     // Lighting
-    const ambientLight = new THREE.AmbientLight(0x808080);
+    const ambientLight = new THREE.AmbientLight(0x404040);
     this.scene.add(ambientLight);
 
-    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-    directionalLight.position.set(1, 2, 1);
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+    directionalLight.position.set(1, 1, 1);
     this.scene.add(directionalLight);
 
     window.addEventListener('resize', () => this.onWindowResize(), false);
@@ -137,12 +82,10 @@ class AudioVisualizer {
     this.generateMazeData();
     this.createMaze();
     this.findValidPaths();
-    this.createAudioPath();
-    this.generateValidCameraPath();
   }
 
   generateMazeData() {
-    const mazeSize = 11; // Increased size for more complexity
+    const mazeSize = 7; // Increased size for more complexity
     this.mazeData = Array(mazeSize).fill().map(() =>
       Array(mazeSize).fill().map(() => ({
         north: false,
@@ -183,17 +126,15 @@ class AudioVisualizer {
   getUnvisitedNeighbors(x, z) {
     const neighbors = [];
     const directions = [
-      [x, z - 1], // North
-      [x, z + 1], // South
-      [x + 1, z], // East
-      [x - 1, z]  // West
+      [x, z - 1, 'north'], [x, z + 1, 'south'],
+      [x + 1, z, 'east'], [x - 1, z, 'west']
     ];
 
-    directions.forEach(([nx, nz]) => {
-      if (this.isValidCell(nx, nz) && !this.mazeData[nx][nz].visited) {
-        neighbors.push([nx, nz]);
+    for (const [newX, newZ] of directions) {
+      if (this.isValidCell(newX, newZ) && !this.mazeData[newX][newZ].visited) {
+        neighbors.push([newX, newZ]);
       }
-    });
+    }
     return neighbors;
   }
 
@@ -215,6 +156,266 @@ class AudioVisualizer {
       this.mazeData[x1][z1].north = true;
       this.mazeData[x2][z2].south = true;
     }
+  }
+
+  createRoom(size, wallThickness, x, z, roomData) {
+    const room = new THREE.Group();
+
+    // Floor
+    const floorGeometry = new THREE.PlaneGeometry(size, size);
+    const floorMaterial = new THREE.MeshStandardMaterial({
+      color: 0x8B4513,
+      metalness: 0.3,
+      roughness: 0.7,
+      side: THREE.DoubleSide
+    });
+    const floor = new THREE.Mesh(floorGeometry, floorMaterial);
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.y = 0.01; // prevent z-fighting
+    room.add(floor);
+
+    // Ceiling
+    const ceiling = floor.clone();
+    ceiling.position.y = size;
+    room.add(ceiling);
+
+    const doorWidth = 3;
+    const doorHeight = 6;
+
+    // Create walls with doorways based on roomData
+    const walls = [
+      { direction: 'north', rotation: 0, position: [0, 0, -size / 2], hasDoor: roomData.north },
+      { direction: 'south', rotation: 0, position: [0, 0, size / 2], hasDoor: roomData.south },
+      { direction: 'east', rotation: Math.PI / 2, position: [size / 2, 0, 0], hasDoor: roomData.east },
+      { direction: 'west', rotation: Math.PI / 2, position: [-size / 2, 0, 0], hasDoor: roomData.west }
+    ];
+
+    walls.forEach(wall => {
+      if (wall.hasDoor) {
+        // Create wall segments around door
+        const sideWallGeometry = new THREE.BoxGeometry((size - doorWidth) / 2, size, wallThickness);
+        const wallMaterial = new THREE.MeshStandardMaterial({
+          color: 0xD2B48C,
+          metalness: 0.2,
+          roughness: 0.8
+        });
+
+        // Left wall segment
+        const leftWall = new THREE.Mesh(sideWallGeometry, wallMaterial);
+        leftWall.position.set(
+          wall.position[0] - (wall.rotation ? doorWidth / 2 + (size - doorWidth) / 4 : 0),
+          wall.position[1] + size / 2,
+          wall.position[2] - (!wall.rotation ? doorWidth / 2 + (size - doorWidth) / 4 : 0)
+        );
+        leftWall.rotation.y = wall.rotation;
+        room.add(leftWall);
+
+        // Right wall segment
+        const rightWall = new THREE.Mesh(sideWallGeometry, wallMaterial);
+        rightWall.position.set(
+          wall.position[0] + (wall.rotation ? doorWidth / 2 + (size - doorWidth) / 4 : 0),
+          wall.position[1] + size / 2,
+          wall.position[2] + (!wall.rotation ? doorWidth / 2 + (size - doorWidth) / 4 : 0)
+        );
+        rightWall.rotation.y = wall.rotation;
+        room.add(rightWall);
+
+        // Top of doorway
+        const topGeometry = new THREE.BoxGeometry(doorWidth, size - doorHeight, wallThickness);
+        const topWall = new THREE.Mesh(topGeometry, wallMaterial);
+        topWall.position.set(
+          wall.position[0],
+          wall.position[1] + size - (size - doorHeight) / 2,
+          wall.position[2]
+        );
+        topWall.rotation.y = wall.rotation;
+        room.add(topWall);
+      } else {
+        // Full wall if no door
+        const wallGeometry = new THREE.BoxGeometry(size, size, wallThickness);
+        const wallMaterial = new THREE.MeshStandardMaterial({
+          color: 0xD2B48C,
+          metalness: 0.2,
+          roughness: 0.8
+        });
+        const fullWall = new THREE.Mesh(wallGeometry, wallMaterial);
+        fullWall.position.set(
+          wall.position[0],
+          wall.position[1] + size / 2,
+          wall.position[2]
+        );
+        fullWall.rotation.y = wall.rotation;
+        room.add(fullWall);
+      }
+    });
+
+    room.position.set(x, 0, z);
+    return room;
+  }
+
+  createMaze() {
+    this.rooms = [];
+    const mazeSize = this.mazeData.length;
+    const wallThickness = 0.5;
+
+    for (let x = 0; x < mazeSize; x++) {
+      for (let z = 0; z < mazeSize; z++) {
+        const posX = (x - Math.floor(mazeSize / 2)) * this.roomSize;
+        const posZ = (z - Math.floor(mazeSize / 2)) * this.roomSize;
+
+        const room = this.createRoom(this.roomSize, wallThickness, posX, posZ, this.mazeData[x][z]);
+        this.rooms.push(room);
+        this.scene.add(room);
+      }
+    }
+  }
+
+  findValidPaths() {
+    const mazeSize = this.mazeData.length;
+    const startX = Math.floor(mazeSize / 2);
+    const startZ = Math.floor(mazeSize / 2);
+
+    this.validPath = this.findPathToExit(startX, startZ);
+
+    this.pathPoints = this.validPath.map(([x, z]) => {
+      return new THREE.Vector3(
+        (x - Math.floor(mazeSize / 2)) * this.roomSize,
+        2,
+        (z - Math.floor(mazeSize / 2)) * this.roomSize
+      );
+    });
+  }
+
+  findPathToExit(startX, startZ) {
+    const goal = this.findExitPoint(startX, startZ);
+    const openSet = [[startX, startZ]];
+    const closedSet = new Set();
+    const cameFrom = new Map();
+    const gScore = new Map();
+    const fScore = new Map();
+
+    gScore.set(`${startX},${startZ}`, 0);
+    fScore.set(`${startX},${startZ}`, this.heuristic([startX, startZ], goal));
+
+    while (openSet.length > 0) {
+      const current = this.getLowestFScore(openSet, fScore);
+      if (!current) break; // Prevent error if openSet becomes empty
+
+      if (current[0] === goal[0] && current[1] === goal[1]) {
+        return this.reconstructPath(cameFrom, current);
+      }
+
+      openSet.splice(openSet.indexOf(current), 1);
+      closedSet.add(`${current[0]},${current[1]}`);
+
+      const neighbors = this.getValidNeighbors(current[0], current[1]);
+      for (const neighbor of neighbors) {
+        if (closedSet.has(`${neighbor[0]},${neighbor[1]}`)) continue;
+
+        const tentativeGScore = gScore.get(`${current[0]},${current[1]}`) + 1;
+
+        if (!openSet.find(([x, z]) => x === neighbor[0] && z === neighbor[1])) {
+          openSet.push(neighbor);
+        } else if (tentativeGScore >= (gScore.get(`${neighbor[0]},${neighbor[1]}`) || Infinity)) {
+          continue;
+        }
+
+        cameFrom.set(`${neighbor[0]},${neighbor[1]}`, current);
+        gScore.set(`${neighbor[0]},${neighbor[1]}`, tentativeGScore);
+        fScore.set(`${neighbor[0]},${neighbor[1]}`,
+          tentativeGScore + this.heuristic(neighbor, goal));
+      }
+    }
+
+    return null;
+  }
+
+  findExitPoint(startX, startZ) {
+    const mazeSize = this.mazeData.length;
+    let exits = [];
+
+    for (let i = 0; i < mazeSize; i++) {
+      if (this.mazeData[i][0].north) exits.push([i, 0]);
+      if (this.mazeData[i][mazeSize - 1].south) exits.push([i, mazeSize - 1]);
+      if (this.mazeData[0][i].west) exits.push([0, i]);
+      if (this.mazeData[mazeSize - 1][i].east) exits.push([mazeSize - 1, i]);
+    }
+
+    if (exits.length === 0) {
+      // If no exits found, create one at the edge cell furthest from start
+      let maxDistance = 0;
+      let furthestEdgePoint = null;
+      for (let x = 0; x < mazeSize; x++) {
+        for (let z = 0; z < mazeSize; z++) {
+          if (x === 0 || x === mazeSize - 1 || z === 0 || z === mazeSize - 1) {
+            const distance = Math.abs(x - startX) + Math.abs(z - startZ);
+            if (distance > maxDistance) {
+              maxDistance = distance;
+              furthestEdgePoint = [x, z];
+            }
+          }
+        }
+      }
+      // Create an exit passage at furthestEdgePoint
+      if (furthestEdgePoint) {
+        this.createExitPassage(furthestEdgePoint[0], furthestEdgePoint[1]);
+        exits.push(furthestEdgePoint);
+      } else {
+        console.error("Could not find a valid exit point.");
+      }
+    }
+
+    // Now select the exit point furthest from the start
+    let furthestExit = exits[0];
+    let maxDistance = 0;
+    for (let exit of exits) {
+      const distance = Math.abs(exit[0] - startX) + Math.abs(exit[1] - startZ);
+      if (distance > maxDistance) {
+        maxDistance = distance;
+        furthestExit = exit;
+      }
+    }
+
+    return furthestExit;
+  }
+
+  createExitPassage(x, z) {
+    const mazeSize = this.mazeData.length;
+    if (x === 0) this.mazeData[x][z].west = true;
+    else if (x === mazeSize - 1) this.mazeData[x][z].east = true;
+    else if (z === 0) this.mazeData[x][z].north = true;
+    else if (z === mazeSize - 1) this.mazeData[x][z].south = true;
+  }
+
+  heuristic(pos, goal) {
+    return Math.abs(pos[0] - goal[0]) + Math.abs(pos[1] - goal[1]);
+  }
+
+  getLowestFScore(openSet, fScore) {
+    if (openSet.length === 0) return undefined;
+    return openSet.reduce((lowest, current) => {
+      const currentScore = fScore.get(`${current[0]},${current[1]}`) || Infinity;
+      const lowestScore = fScore.get(`${lowest[0]},${lowest[1]}`) || Infinity;
+      return currentScore < lowestScore ? current : lowest;
+    });
+  }
+
+  reconstructPath(cameFrom, current) {
+    const path = [current];
+    while (cameFrom.has(`${current[0]},${current[1]}`)) {
+      current = cameFrom.get(`${current[0]},${current[1]}`);
+      path.unshift(current);
+    }
+    return path;
+  }
+
+  getValidNeighbors(x, z) {
+    const neighbors = [];
+    if (this.mazeData[x][z].north && z > 0) neighbors.push([x, z - 1]);
+    if (this.mazeData[x][z].south && z < this.mazeData.length - 1) neighbors.push([x, z + 1]);
+    if (this.mazeData[x][z].east && x < this.mazeData.length - 1) neighbors.push([x + 1, z]);
+    if (this.mazeData[x][z].west && x > 0) neighbors.push([x - 1, z]);
+    return neighbors;
   }
 
   ensureValidExit(startX, startZ) {
@@ -258,437 +459,12 @@ class AudioVisualizer {
     this.createExitPassage(furthestPoint[0], furthestPoint[1]);
   }
 
-  createExitPassage(x, z) {
-    const mazeSize = this.mazeData.length;
-    if (x === 0) this.mazeData[x][z].west = true;
-    else if (x === mazeSize - 1) this.mazeData[x][z].east = true;
-    else if (z === 0) this.mazeData[x][z].north = true;
-    else if (z === mazeSize - 1) this.mazeData[x][z].south = true;
-  }
-
-  createRoom(size, wallThickness, x, z, roomData) {
-    const room = new THREE.Group();
-
-    // Floor with decorative texture
-    const floorGeometry = new THREE.PlaneGeometry(size, size);
-    const floorMaterial = new THREE.MeshStandardMaterial({
-      color: 0x8B4513,
-      metalness: 0.3,
-      roughness: 0.7,
-      side: THREE.DoubleSide,
-      map: this.textures.decorative,
-    });
-    const floor = new THREE.Mesh(floorGeometry, floorMaterial);
-    floor.rotation.x = -Math.PI / 2;
-    floor.position.y = 0.01; // prevent z-fighting
-    room.add(floor);
-
-    // Ceiling
-    const ceiling = floor.clone();
-    ceiling.position.y = size;
-    room.add(ceiling);
-
-    const doorWidth = 3;
-    const doorHeight = 6;
-
-    // Create walls with doorways based on roomData
-    const walls = [
-      { direction: 'north', rotation: 0, position: [0, 0, -size / 2], hasDoor: roomData.north },
-      { direction: 'south', rotation: 0, position: [0, 0, size / 2], hasDoor: roomData.south },
-      { direction: 'east', rotation: Math.PI / 2, position: [size / 2, 0, 0], hasDoor: roomData.east },
-      { direction: 'west', rotation: Math.PI / 2, position: [-size / 2, 0, 0], hasDoor: roomData.west }
-    ];
-
-    walls.forEach(wall => {
-      const wallGroup = new THREE.Group();
-
-      if (wall.hasDoor) {
-        // Create wall segments around door
-        const sideWallGeometry = new THREE.BoxGeometry((size - doorWidth) / 2, size, wallThickness);
-        const wallMaterial = new THREE.MeshStandardMaterial({
-          color: 0xD2B48C,
-          metalness: 0.2,
-          roughness: 0.8
-        });
-
-        // Left wall segment
-        const leftWall = new THREE.Mesh(sideWallGeometry, wallMaterial);
-        leftWall.position.set(
-          wall.position[0] - (wall.rotation ? doorWidth / 2 + (size - doorWidth) / 4 : 0),
-          wall.position[1] + size / 2,
-          wall.position[2] - (!wall.rotation ? doorWidth / 2 + (size - doorWidth) / 4 : 0)
-        );
-        leftWall.rotation.y = wall.rotation;
-        wallGroup.add(leftWall);
-
-        // Right wall segment
-        const rightWall = new THREE.Mesh(sideWallGeometry, wallMaterial);
-        rightWall.position.set(
-          wall.position[0] + (wall.rotation ? doorWidth / 2 + (size - doorWidth) / 4 : 0),
-          wall.position[1] + size / 2,
-          wall.position[2] + (!wall.rotation ? doorWidth / 2 + (size - doorWidth) / 4 : 0)
-        );
-        rightWall.rotation.y = wall.rotation;
-        wallGroup.add(rightWall);
-
-        // Top of doorway
-        const topGeometry = new THREE.BoxGeometry(doorWidth, size - doorHeight, wallThickness);
-        const topWall = new THREE.Mesh(topGeometry, wallMaterial);
-        topWall.position.set(
-          wall.position[0],
-          wall.position[1] + size - (size - doorHeight) / 2,
-          wall.position[2]
-        );
-        topWall.rotation.y = wall.rotation;
-        wallGroup.add(topWall);
-      } else {
-        // Full wall if no door
-        const wallGeometry = new THREE.BoxGeometry(size, size, wallThickness);
-        const wallMaterial = new THREE.MeshStandardMaterial({
-          color: 0xD2B48C,
-          metalness: 0.2,
-          roughness: 0.8
-        });
-        const fullWall = new THREE.Mesh(wallGeometry, wallMaterial);
-        fullWall.position.set(
-          wall.position[0],
-          wall.position[1] + size / 2,
-          wall.position[2]
-        );
-        fullWall.rotation.y = wall.rotation;
-        wallGroup.add(fullWall);
-      }
-
-      // Add paintings to walls
-      if (!wall.hasDoor) {
-        const paintingGeometry = new THREE.PlaneGeometry(doorWidth, doorHeight);
-        const paintingMaterial = new THREE.MeshStandardMaterial({
-          map: this.textures.wallPainting,
-          side: THREE.DoubleSide
-        });
-        const painting = new THREE.Mesh(paintingGeometry, paintingMaterial);
-        painting.rotation.y = wall.rotation;
-        painting.position.set(
-          wall.position[0],
-          wall.position[1] + doorHeight / 2 + 1,
-          wall.position[2] + (wall.rotation === 0 ? wallThickness / 2 + 0.01 : 0)
-        );
-        if (wall.rotation !== 0) {
-          painting.position.set(
-            wall.position[0] + (wall.rotation === Math.PI / 2 ? wallThickness / 2 + 0.01 : 0),
-            wall.position[1] + doorHeight / 2 + 1,
-            wall.position[2]
-          );
-        }
-        wallGroup.add(painting);
-      }
-
-      room.add(wallGroup);
-    });
-
-    // Add columns at corners
-    const columnGeometry = new THREE.CylinderGeometry(0.3, 0.3, size, 16);
-    const columnMaterial = new THREE.MeshStandardMaterial({
-      color: 0xAAAAAA,
-      metalness: 0.5,
-      roughness: 0.5
-    });
-
-    const corners = [
-      [size / 2 - wallThickness / 2, size / 2, size / 2 - wallThickness / 2],
-      [size / 2 - wallThickness / 2, size / 2, -size / 2 + wallThickness / 2],
-      [-size / 2 + wallThickness / 2, size / 2, size / 2 - wallThickness / 2],
-      [-size / 2 + wallThickness / 2, size / 2, -size / 2 + wallThickness / 2],
-    ];
-
-    corners.forEach(corner => {
-      const column = new THREE.Mesh(columnGeometry, columnMaterial);
-      column.position.set(corner[0], corner[1], corner[2]);
-      room.add(column);
-    });
-
-    room.position.set(x, 0, z);
-    return room;
-  }
-
-  createMaze() {
-    this.rooms = [];
-    const mazeSize = this.mazeData.length;
-    const wallThickness = 0.5;
-
-    for (let x = 0; x < mazeSize; x++) {
-      for (let z = 0; z < mazeSize; z++) {
-        const posX = (x - Math.floor(mazeSize / 2)) * this.roomSize;
-        const posZ = (z - Math.floor(mazeSize / 2)) * this.roomSize;
-
-        const room = this.createRoom(this.roomSize, wallThickness, posX, posZ, this.mazeData[x][z]);
-        this.rooms.push(room);
-        this.scene.add(room);
-      }
-    }
-  }
-
-  findValidPaths() {
-    const mazeSize = this.mazeData.length;
-    const startX = Math.floor(mazeSize / 2);
-    const startZ = Math.floor(mazeSize / 2);
-
-    // Find valid path to exit
-    this.validPath = this.findPathToExit(startX, startZ);
-    
-    if (!this.validPath) {
-      console.error('No valid path found - creating emergency exit');
-      this.createEmergencyExit(startX, startZ);
-      this.validPath = this.findPathToExit(startX, startZ);
-    }
-
-    // Convert maze coordinates to world coordinates
-    this.worldPath = this.validPath.map(([x, z]) => {
-      return new THREE.Vector3(
-        (x - Math.floor(mazeSize / 2)) * this.roomSize,
-        2,
-        (z - Math.floor(mazeSize / 2)) * this.roomSize
-      );
-    });
-  }
-
-  createEmergencyExit(startX, startZ) {
-    const mazeSize = this.mazeData.length;
-    // Find furthest edge from start
-    let maxDist = 0;
-    let bestExit = null;
-    
-    for (let i = 0; i < mazeSize; i++) {
-      const edges = [
-        {x: 0, z: i},
-        {x: mazeSize-1, z: i},
-        {x: i, z: 0},
-        {x: i, z: mazeSize-1}
-      ];
-      
-      edges.forEach(edge => {
-        const dist = Math.abs(edge.x - startX) + Math.abs(edge.z - startZ);
-        if (dist > maxDist) {
-          maxDist = dist;
-          bestExit = edge;
-        }
-      });
-    }
-
-    if (bestExit) {
-      // Create path to exit by carving through walls
-      let currentX = startX;
-      let currentZ = startZ;
-      
-      while (currentX !== bestExit.x || currentZ !== bestExit.z) {
-        if (currentX < bestExit.x) {
-          this.mazeData[currentX][currentZ].east = true;
-          this.mazeData[currentX + 1][currentZ].west = true;
-          currentX++;
-        } else if (currentX > bestExit.x) {
-          this.mazeData[currentX][currentZ].west = true;
-          this.mazeData[currentX - 1][currentZ].east = true;
-          currentX--;
-        } else if (currentZ < bestExit.z) {
-          this.mazeData[currentX][currentZ].south = true;
-          this.mazeData[currentX][currentZ + 1].north = true;
-          currentZ++;
-        } else if (currentZ > bestExit.z) {
-          this.mazeData[currentX][currentZ].north = true;
-          this.mazeData[currentX][currentZ - 1].south = true;
-          currentZ--;
-        }
-      }
-
-      // Create final exit
-      if (bestExit.x === 0) this.mazeData[bestExit.x][bestExit.z].west = true;
-      else if (bestExit.x === mazeSize-1) this.mazeData[bestExit.x][bestExit.z].east = true;
-      else if (bestExit.z === 0) this.mazeData[bestExit.x][bestExit.z].north = true;
-      else if (bestExit.z === mazeSize-1) this.mazeData[bestExit.x][bestExit.z].south = true;
-    }
-  }
-
-  findPathToExit(startX, startZ) {
-    const queue = [[startX, startZ]];
-    const visited = new Set(`${startX},${startZ}`);
-    const parent = new Map();
-    const mazeSize = this.mazeData.length;
-    let exitFound = null;
-
-    while (queue.length > 0) {
-      const [x, z] = queue.shift();
-      
-      // Check if this is an exit
-      if (x === 0 || x === mazeSize-1 || z === 0 || z === mazeSize-1) {
-        if (this.isValidExit(x, z)) {
-          exitFound = [x, z];
-          break;
-        }
-      }
-
-      // Get valid neighbors
-      const neighbors = this.getValidNeighbors(x, z);
-      for (const [nextX, nextZ] of neighbors) {
-        const key = `${nextX},${nextZ}`;
-        if (!visited.has(key)) {
-          visited.add(key);
-          queue.push([nextX, nextZ]);
-          parent.set(key, [x, z]);
-        }
-      }
-    }
-
-    if (exitFound) {
-      // Reconstruct path
-      const path = [exitFound];
-      let current = exitFound;
-      while (current[0] !== startX || current[1] !== startZ) {
-        const key = `${current[0]},${current[1]}`;
-        current = parent.get(key);
-        path.unshift(current);
-      }
-      return path;
-    }
-
-    return null;
-  }
-
-  isValidExit(x, z) {
-    const mazeSize = this.mazeData.length;
-    if (x === 0) return this.mazeData[x][z].west;
-    if (x === mazeSize-1) return this.mazeData[x][z].east;
-    if (z === 0) return this.mazeData[x][z].north;
-    if (z === mazeSize-1) return this.mazeData[x][z].south;
-    return false;
-  }
-
-  getValidNeighbors(x, z) {
-    const neighbors = [];
-    if (this.mazeData[x][z].north && z > 0) neighbors.push([x, z - 1]);
-    if (this.mazeData[x][z].south && z < this.mazeData.length - 1) neighbors.push([x, z + 1]);
-    if (this.mazeData[x][z].east && x < this.mazeData.length - 1) neighbors.push([x + 1, z]);
-    if (this.mazeData[x][z].west && x > 0) neighbors.push([x - 1, z]);
-    return neighbors;
-  }
-
-  createAudioPath() {
-    this.pathPoints = [];
-
-    for (let i = 0; i < this.worldPath.length; i++) {
-      this.pathPoints.push(this.worldPath[i].clone().setY(2));
-    }
-
-    this.pathSegments = [];
-    this.pathPoints.forEach((point, i) => {
-      const geometry = new THREE.BoxGeometry(0.2, 0.1, 0.2);
-      const material = new THREE.MeshStandardMaterial({
-        color: 0xFFFFFF,
-        emissive: 0xFFFFFF,
-        emissiveIntensity: 0,
-        transparent: true,
-        opacity: 0.8
-      });
-
-      const segment = new THREE.Mesh(geometry, material);
-      segment.position.copy(point);
-      this.scene.add(segment);
-      this.pathSegments.push(segment);
-    });
-  }
-
-  generateValidCameraPath() {
-    this.cameraPath = [];
-    const pathLength = this.pathPoints.length;
-
-    for (let i = 0; i < pathLength - 1; i++) {
-      const currentPoint = this.pathPoints[i];
-      const nextPoint = this.pathPoints[i + 1];
-      const direction = new THREE.Vector3()
-        .subVectors(nextPoint, currentPoint)
-        .normalize();
-
-      // Position camera slightly behind and above current point
-      const cameraOffset = direction.clone()
-        .multiplyScalar(-2) // Move camera behind current point
-        .add(new THREE.Vector3(0, 1.5, 0)); // Lift camera up slightly
-      
-      const cameraPosition = currentPoint.clone().add(cameraOffset);
-
-      // Ensure camera position doesn't clip through walls
-      if (!this.checkWallCollision(cameraPosition)) {
-        this.cameraPath.push({
-          position: cameraPosition,
-          lookAt: nextPoint.clone(),
-        });
-      }
-    }
-
-    // Add final camera position looking at exit
-    const lastPoint = this.pathPoints[pathLength - 1];
-    const secondLastPoint = this.pathPoints[pathLength - 2];
-    const finalDirection = new THREE.Vector3()
-      .subVectors(lastPoint, secondLastPoint)
-      .normalize();
-    
-    const finalCameraPosition = lastPoint.clone()
-      .add(finalDirection.clone().multiplyScalar(-2))
-      .add(new THREE.Vector3(0, 1.5, 0));
-
-    this.cameraPath.push({
-      position: finalCameraPosition,
-      lookAt: lastPoint.clone().add(finalDirection),
-    });
-
-    this.currentWaypoint = 0;
-    this.waypointTransition = 0;
-  }
-
-  checkWallCollision(position) {
-    const halfRoomSize = this.roomSize / 2;
-    const mazeSize = this.mazeData.length;
-
-    for (let x = 0; x < mazeSize; x++) {
-      for (let z = 0; z < mazeSize; z++) {
-        const roomWorldX = (x - Math.floor(mazeSize / 2)) * this.roomSize;
-        const roomWorldZ = (z - Math.floor(mazeSize / 2)) * this.roomSize;
-
-        const roomCenter = new THREE.Vector3(roomWorldX, this.roomSize / 2, roomWorldZ);
-        const roomSizeVector = new THREE.Vector3(this.roomSize - 1, this.roomSize, this.roomSize - 1);
-        const box = new THREE.Box3().setFromCenterAndSize(roomCenter, roomSizeVector);
-
-        if (box.containsPoint(position)) {
-          const mazeX = x;
-          const mazeZ = z;
-
-          const localX = position.x - roomWorldX;
-          const localZ = position.z - roomWorldZ;
-
-          const tolerance = halfRoomSize - 1;
-
-          if (
-            (localX > tolerance && !this.mazeData[mazeX][mazeZ].east) ||
-            (localX < -tolerance && !this.mazeData[mazeX][mazeZ].west) ||
-            (localZ > tolerance && !this.mazeData[mazeX][mazeZ].south) ||
-            (localZ < -tolerance && !this.mazeData[mazeX][mazeZ].north)
-          ) {
-            return true;
-          }
-        }
-      }
-    }
-    return false;
-  }
-
-  async setupAudio() {
+  setupAudio() {
     this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
     this.analyser = this.audioContext.createAnalyser();
     this.analyser.fftSize = 128;
 
     this.audio = new Audio('/Bitwave Dreams - Locked Away - Sonauto.wav');
-    await this.audio.play().catch(() => {});
-    this.audio.pause();
-    this.audio.currentTime = 0;
-
     this.audioSource = this.audioContext.createMediaElementSource(this.audio);
     this.audioSource.connect(this.analyser);
     this.analyser.connect(this.audioContext.destination);
@@ -714,23 +490,29 @@ class AudioVisualizer {
   updateAudioData() {
     this.analyser.getByteFrequencyData(this.dataArray);
 
-    for (let i = 0; i < this.pathSegments.length; i++) {
-      const value = this.dataArray[i % this.dataArray.length] || 0;
+    for (let i = 0; i < this.pathPoints.length; i++) {
+      const value = this.dataArray[i] || 0;
       const intensity = value / 255;
 
-      const segment = this.pathSegments[i];
-      segment.position.y = 0.5 + intensity * 1.5;
-      segment.material.emissiveIntensity = intensity;
-      segment.scale.y = 1 + intensity * 2;
+      const point = this.pathPoints[i];
+      const geometry = new THREE.BoxGeometry(0.2, 0.1, 0.2);
+      const material = new THREE.MeshStandardMaterial({
+        color: 0xFFFFFF,
+        emissive: 0xFFFFFF,
+        emissiveIntensity: intensity,
+        transparent: true,
+        opacity: 0.8
+      });
 
-      const hue = 0.6 - intensity * 0.6;
-      segment.material.color.setHSL(hue, 1, 0.5);
-      segment.material.emissive.setHSL(hue, 1, 0.5);
+      const segment = new THREE.Mesh(geometry, material);
+      segment.position.copy(point);
+      this.scene.add(segment);
     }
   }
 
-  setupCameraPath() {
-    // Existing code
+  generateValidCameraPath() {
+    this.cameraCurve = new THREE.CatmullRomCurve3(this.pathPoints);
+    this.cameraCurve.closed = false;
   }
 
   animate() {
@@ -740,43 +522,15 @@ class AudioVisualizer {
       this.updateAudioData();
     }
 
-    if (
-      this.audio &&
-      !this.audio.paused &&
-      this.cameraPath &&
-      this.cameraPath.length > 1 &&
-      this.animationDuration
-    ) {
-      const progress = (this.audio.currentTime / this.animationDuration);
-      const totalWaypoints = this.cameraPath.length - 1;
-      const currentWaypointIndex = Math.min(
-        Math.floor(progress * totalWaypoints),
-        totalWaypoints - 1
-      );
-      const nextWaypointIndex = currentWaypointIndex + 1;
-      const waypointProgress = progress * totalWaypoints - currentWaypointIndex;
+    if (this.audio && !this.audio.paused && this.cameraCurve) {
+      const progress = THREE.MathUtils.clamp(this.audio.currentTime / this.audio.duration, 0, 1);
 
-      const currentWaypoint = this.cameraPath[currentWaypointIndex];
-      const nextWaypoint = this.cameraPath[nextWaypointIndex];
+      const cameraPosition = this.cameraCurve.getPointAt(progress);
+      const lookAhead = 0.01; // Adjust for look-ahead distance
+      const lookAtPosition = this.cameraCurve.getPointAt(Math.min(progress + lookAhead, 1));
 
-      if (currentWaypoint && nextWaypoint) {
-        const newPos = new THREE.Vector3().lerpVectors(
-          currentWaypoint.position,
-          nextWaypoint.position,
-          waypointProgress
-        );
-
-        const newLookAt = new THREE.Vector3().lerpVectors(
-          currentWaypoint.lookAt,
-          nextWaypoint.lookAt,
-          waypointProgress
-        );
-
-        if (!this.checkWallCollision(newPos)) {
-          this.camera.position.copy(newPos);
-          this.camera.lookAt(newLookAt);
-        }
-      }
+      this.camera.position.copy(cameraPosition);
+      this.camera.lookAt(lookAtPosition);
     }
 
     this.renderer.render(this.scene, this.camera);
